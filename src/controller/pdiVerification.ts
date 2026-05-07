@@ -1,0 +1,188 @@
+import { Request, Response } from "express";
+import PdiVerification from "../model/pdiVerification";
+import ProductionLog from "../model/productionLog";
+import Container from "../model/container";
+import User from "../model/user";
+import { sendPushNotification, sendPushNotificationToMany } from "../utils/notify";
+
+const getPagination = (query: Request["query"]) => {
+  const page = Math.max(Number(query.page) || 1, 1);
+  const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
+  const skip = (page - 1) * limit;
+  return { page, limit, skip };
+};
+
+// ─── PDI: Verify a Production Log ─────────────────────────────────────────────
+export const verifyProductionLog = async (req: Request, res: Response) => {
+  try {
+    const { logId } = req.params;
+    const { verifiedQuantity, isIncomplete, missingQuantity, remarks } = req.body;
+    const pdiId = req.userId;
+
+    if (verifiedQuantity === undefined) {
+      return res.status(400).json({ message: "verifiedQuantity is required" });
+    }
+
+    const log = await ProductionLog.findById(logId).populate("container");
+    if (!log) return res.status(404).json({ message: "Production log not found" });
+
+    if (log.status === "verified") {
+      return res.status(409).json({ message: "This log has already been verified" });
+    }
+
+    // Verified qty cannot exceed reported qty
+    if (verifiedQuantity > log.reportedQuantity) {
+      return res.status(400).json({
+        message: `verifiedQuantity (${verifiedQuantity}) cannot exceed reportedQuantity (${log.reportedQuantity})`,
+      });
+    }
+
+    const incomplete = isIncomplete ?? (verifiedQuantity < log.reportedQuantity);
+    const missing = missingQuantity ?? (log.reportedQuantity - verifiedQuantity);
+
+    // Create or update verification record
+    const verification = await PdiVerification.findOneAndUpdate(
+      { productionLog: logId },
+      {
+        productionLog: logId,
+        container: log.container,
+        verifiedBy: pdiId,
+        verifiedQuantity,
+        isIncomplete: incomplete,
+        missingQuantity: missing,
+        remarks: remarks ?? "",
+        verifiedAt: new Date(),
+      },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+
+    // Update the production log
+    log.verifiedQuantity = verifiedQuantity;
+    log.status = incomplete ? "incomplete" : "verified";
+    await log.save();
+
+    // ── Notifications ────────────────────────────────────────────────────────
+    const containerDoc = log.container as any; // already populated
+    const containerModel: string = containerDoc?.model ?? "container";
+    const containerIdStr: string = containerDoc?._id?.toString() ?? "";
+
+    // 1. Notify the Team whose log was verified
+    await sendPushNotification(
+      log.team,
+      incomplete ? "⚠️ Production Partially Verified" : "✅ Production Verified",
+      incomplete
+        ? `Your report for ${containerModel} was partially accepted. ${missing} units are unverified.`
+        : `All ${verifiedQuantity} units for ${containerModel} have been verified by PDI.`,
+      {
+        type: incomplete ? "pdi_incomplete" : "pdi_verified",
+        logId,
+        containerId: containerIdStr,
+        verifiedQuantity: String(verifiedQuantity),
+      }
+    );
+
+    // 2. Notify all Admins with the verification summary
+    const admins = await User.find({ role: "admin" }).select("_id");
+    if (admins.length > 0) {
+      await sendPushNotificationToMany(
+        admins.map((a) => a._id),
+        "📋 PDI Verification Complete",
+        `PDI verified ${verifiedQuantity} units for ${containerModel}.${incomplete ? ` Missing: ${missing} units.` : " Fully verified."}`,
+        {
+          type: "pdi_verified_admin",
+          logId,
+          containerId: containerIdStr,
+          verifiedQuantity: String(verifiedQuantity),
+        }
+      );
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
+    return res.status(200).json({ message: "Verification saved", verification });
+  } catch (err: any) {
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── Get Verifications for a Container (Admin/PDI) ───────────────────────────
+export const getVerificationsByContainer = async (req: Request, res: Response) => {
+  try {
+    const { containerId } = req.params;
+    const { page, limit, skip } = getPagination(req.query);
+
+    const [verifications, total, summaryVerifications] = await Promise.all([
+      PdiVerification.find({ container: containerId })
+        .populate("productionLog", "date reportedQuantity status")
+        .populate("verifiedBy", "name email")
+        .sort({ verifiedAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      PdiVerification.countDocuments({ container: containerId }),
+      PdiVerification.find({ container: containerId }).select("verifiedQuantity"),
+    ]);
+
+    const totalVerified = summaryVerifications.reduce((s, v) => s + v.verifiedQuantity, 0);
+
+    return res.status(200).json({
+      verifications,
+      totalVerified,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasNextPage: page * limit < total,
+      },
+    });
+  } catch (err: any) {
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── Get Single Verification ──────────────────────────────────────────────────
+export const getVerificationByLog = async (req: Request, res: Response) => {
+  try {
+    const { logId } = req.params;
+    const verification = await PdiVerification.findOne({ productionLog: logId })
+      .populate("verifiedBy", "name email");
+    if (!verification) {
+      return res.status(404).json({ message: "No verification found for this log" });
+    }
+    return res.status(200).json({ verification });
+  } catch (err: any) {
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── PDI Dashboard: Summary of pending/verified logs ────────────────────────
+export const getPdiDashboard = async (req: Request, res: Response) => {
+  try {
+    const pdiId = req.userId;
+    const { page, limit, skip } = getPagination(req.query);
+
+    const pendingCount = await ProductionLog.countDocuments({ status: "pending" });
+    const [verifiedByMe, total] = await Promise.all([
+      PdiVerification.find({ verifiedBy: pdiId })
+        .populate("productionLog", "date reportedQuantity")
+        .populate("container", "model")
+        .sort({ verifiedAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      PdiVerification.countDocuments({ verifiedBy: pdiId }),
+    ]);
+
+    return res.status(200).json({
+      pendingCount,
+      recentVerifications: verifiedByMe,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasNextPage: page * limit < total,
+      },
+    });
+  } catch (err: any) {
+    return res.status(500).json({ message: err.message });
+  }
+};
