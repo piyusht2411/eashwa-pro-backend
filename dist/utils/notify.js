@@ -35,18 +35,47 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.sendPushNotificationToMany = exports.sendPushNotification = void 0;
+exports.sendPushNotificationToMany = exports.sendPushNotification = exports.createNotificationRecord = void 0;
 const admin = __importStar(require("firebase-admin"));
 const user_1 = __importDefault(require("../model/user"));
+const notification_1 = __importDefault(require("../model/notification"));
+/**
+ * Persist a notification record in the DB so the in-app notification feed has it.
+ * Silently swallows errors so it never breaks the main flow.
+ */
+const createNotificationRecord = (recipientId, type, title, body, data) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        if (!recipientId)
+            return;
+        yield notification_1.default.create({
+            recipient: recipientId,
+            type,
+            title,
+            body,
+            data: data !== null && data !== void 0 ? data : {},
+        });
+    }
+    catch (err) {
+        console.error("[notify] DB notification write failed:", err);
+    }
+});
+exports.createNotificationRecord = createNotificationRecord;
 /**
  * Send a Firebase push notification to a single user by userId.
+ * Also writes a Notification DB record for the in-app feed.
  * Silently swallows errors so it never breaks the main flow.
  */
 const sendPushNotification = (userId, title, body, data) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a;
+    const type = (_a = data === null || data === void 0 ? void 0 : data.type) !== null && _a !== void 0 ? _a : "general";
+    // DB write runs in parallel with FCM send
+    const dbWrite = (0, exports.createNotificationRecord)(userId, type, title, body, data);
     try {
         const user = yield user_1.default.findById(userId).select("fcmToken name");
-        if (!user || !user.fcmToken)
+        if (!user || !user.fcmToken) {
+            yield dbWrite;
             return;
+        }
         yield admin.messaging().send({
             token: user.fcmToken,
             notification: { title, body },
@@ -62,6 +91,7 @@ const sendPushNotification = (userId, title, body, data) => __awaiter(void 0, vo
     catch (err) {
         console.error("[notify] FCM push failed:", err);
     }
+    yield dbWrite;
 });
 exports.sendPushNotification = sendPushNotification;
 /**

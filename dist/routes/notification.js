@@ -1,0 +1,10 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const notification_1 = require("../controller/notification");
+const authMiddleware_1 = require("../middleware/authMiddleware");
+const router = (0, express_1.Router)();
+router.use(authMiddleware_1.authenticateToken);
+router.get("/", (0, authMiddleware_1.requireRole)("admin", "team", "pdi"), notification_1.getMyNotifications);
+router.post("/read-all", (0, authMiddleware_1.requireRole)("admin", "team", "pdi"), notification_1.markAllRead);
+exports.default = router;

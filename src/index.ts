@@ -13,6 +13,8 @@ import containerRoutes from "./routes/container";
 import productionLogRoutes from "./routes/productionLog";
 import pdiVerificationRoutes from "./routes/pdiVerification";
 import paymentRoutes from "./routes/payment";
+import adminDashboardRouter from "./routes/adminDashboard";
+import notificationRouter from "./routes/notification";
 
 dotenv.config();
 
@@ -71,6 +73,8 @@ app.use("/api/containers", containerRoutes);
 app.use("/api/production-logs", productionLogRoutes);
 app.use("/api/pdi", pdiVerificationRoutes);
 app.use("/api/payments", paymentRoutes);
+app.use("/api/admin", adminDashboardRouter);
+app.use("/api/notifications", notificationRouter);
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 app.get("/", (req: Request, res: Response) => {

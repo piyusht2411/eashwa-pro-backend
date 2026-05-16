@@ -12,10 +12,12 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getLogById = exports.getTeamDashboard = exports.getPendingLogs = exports.getLogsByContainer = exports.submitProductionLog = void 0;
+exports.getLogById = exports.getTeamHistory = exports.getTeamDashboard = exports.getPendingLogs = exports.getLogsByContainer = exports.submitProductionLog = void 0;
+const mongoose_1 = __importDefault(require("mongoose"));
 const productionLog_1 = __importDefault(require("../model/productionLog"));
 const container_1 = __importDefault(require("../model/container"));
 const user_1 = __importDefault(require("../model/user"));
+const pdiVerification_1 = __importDefault(require("../model/pdiVerification"));
 const notify_1 = require("../utils/notify");
 const getPagination = (query) => {
     const page = Math.max(Number(query.page) || 1, 1);
@@ -171,6 +173,116 @@ const getTeamDashboard = (req, res) => __awaiter(void 0, void 0, void 0, functio
     }
 });
 exports.getTeamDashboard = getTeamDashboard;
+// ─── Team: History with month/date filter ────────────────────────────────────
+const getTeamHistory = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const teamId = req.userId;
+        const { month, date } = req.query;
+        const { page, limit, skip } = getPagination(req.query);
+        const filter = { team: teamId };
+        if (date) {
+            const start = new Date(date);
+            start.setUTCHours(0, 0, 0, 0);
+            const end = new Date(start);
+            end.setUTCDate(end.getUTCDate() + 1);
+            filter.date = { $gte: start, $lt: end };
+        }
+        else if (month) {
+            // month: "YYYY-MM"
+            const [yearStr, monthStr] = month.split("-");
+            const year = Number(yearStr);
+            const m = Number(monthStr);
+            if (!year || !m) {
+                return res.status(400).json({ message: "Invalid month format, expected YYYY-MM" });
+            }
+            const start = new Date(Date.UTC(year, m - 1, 1));
+            const end = new Date(Date.UTC(year, m, 1));
+            filter.date = { $gte: start, $lt: end };
+        }
+        const [logs, total] = yield Promise.all([
+            productionLog_1.default.find(filter)
+                .populate("container", "model ratePerUnit quantity")
+                .sort({ date: -1 })
+                .skip(skip)
+                .limit(limit),
+            productionLog_1.default.countDocuments(filter),
+        ]);
+        const containerIds = Array.from(new Set(logs
+            .map((l) => { var _a, _b; return (_b = (_a = l.container) === null || _a === void 0 ? void 0 : _a._id) === null || _b === void 0 ? void 0 : _b.toString(); })
+            .filter(Boolean))).map((id) => new mongoose_1.default.Types.ObjectId(id));
+        const logIds = logs.map((l) => l._id);
+        const [verifiedAggByContainer, verifications] = yield Promise.all([
+            productionLog_1.default.aggregate([
+                {
+                    $match: {
+                        team: new mongoose_1.default.Types.ObjectId(String(teamId)),
+                        container: { $in: containerIds },
+                    },
+                },
+                {
+                    $group: {
+                        _id: "$container",
+                        totalVerified: { $sum: { $ifNull: ["$verifiedQuantity", 0] } },
+                    },
+                },
+            ]),
+            pdiVerification_1.default.find({ productionLog: { $in: logIds } }),
+        ]);
+        const verifiedByContainer = new Map();
+        for (const row of verifiedAggByContainer) {
+            verifiedByContainer.set(String(row._id), row.totalVerified);
+        }
+        const pdiByLog = new Map();
+        for (const v of verifications) {
+            pdiByLog.set(String(v.productionLog), v);
+        }
+        const out = logs.map((l) => {
+            var _a, _b, _c, _d, _e;
+            const container = l.container;
+            const totalVerifiedForContainer = (_a = verifiedByContainer.get(String(container === null || container === void 0 ? void 0 : container._id))) !== null && _a !== void 0 ? _a : 0;
+            const remainingTarget = ((_b = container === null || container === void 0 ? void 0 : container.quantity) !== null && _b !== void 0 ? _b : 0) - totalVerifiedForContainer;
+            const pdi = pdiByLog.get(String(l._id));
+            return {
+                _id: l._id,
+                date: l.date,
+                container: container
+                    ? {
+                        _id: container._id,
+                        model: container.model,
+                        ratePerUnit: container.ratePerUnit,
+                        quantity: container.quantity,
+                    }
+                    : null,
+                reportedQuantity: l.reportedQuantity,
+                verifiedQuantity: (_c = l.verifiedQuantity) !== null && _c !== void 0 ? _c : null,
+                status: l.status,
+                remainingTarget,
+                pdiVerification: pdi
+                    ? {
+                        verifiedQuantity: pdi.verifiedQuantity,
+                        isIncomplete: pdi.isIncomplete,
+                        missingQuantity: (_d = pdi.missingQuantity) !== null && _d !== void 0 ? _d : 0,
+                        remarks: (_e = pdi.remarks) !== null && _e !== void 0 ? _e : "",
+                    }
+                    : null,
+            };
+        });
+        return res.status(200).json({
+            logs: out,
+            pagination: {
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit),
+                hasNextPage: page * limit < total,
+            },
+        });
+    }
+    catch (err) {
+        return res.status(500).json({ message: err.message });
+    }
+});
+exports.getTeamHistory = getTeamHistory;
 // ─── Get Single Production Log by ID (Admin / PDI / Team) ────────────────────
 const getLogById = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     var _a;

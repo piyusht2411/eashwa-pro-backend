@@ -5,6 +5,7 @@ import {
   getLogById,
   getPendingLogs,
   getTeamDashboard,
+  getTeamHistory,
 } from "../controller/productionLog";
 import { authenticateToken, requireRole } from "../middleware/authMiddleware";
 
@@ -23,6 +24,9 @@ router.get("/pending", requireRole("pdi"), getPendingLogs);
 
 // Admin & PDI & Team: get logs for a container
 router.get("/container/:containerId", requireRole("admin", "pdi", "team"), getLogsByContainer);
+
+// Team: history with month/date filter (must be before /:logId)
+router.get("/history", requireRole("team"), getTeamHistory);
 
 // Admin & PDI & Team: get a single production log by ID (used by notification detail screen)
 router.get("/:logId", requireRole("admin", "pdi", "team"), getLogById);

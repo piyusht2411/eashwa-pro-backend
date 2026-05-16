@@ -1,7 +1,9 @@
 import { Request, Response } from "express";
+import mongoose from "mongoose";
 import ProductionLog from "../model/productionLog";
 import Container from "../model/container";
 import User from "../model/user";
+import PdiVerification from "../model/pdiVerification";
 import { sendPushNotification, sendPushNotificationToMany } from "../utils/notify";
 
 const getPagination = (query: Request["query"]) => {
@@ -179,6 +181,127 @@ export const getTeamDashboard = async (req: Request, res: Response) => {
     );
 
     return res.status(200).json({ stats });
+  } catch (err: any) {
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── Team: History with month/date filter ────────────────────────────────────
+export const getTeamHistory = async (req: Request, res: Response) => {
+  try {
+    const teamId = req.userId;
+    const { month, date } = req.query as { month?: string; date?: string };
+    const { page, limit, skip } = getPagination(req.query);
+
+    const filter: any = { team: teamId };
+
+    if (date) {
+      const start = new Date(date);
+      start.setUTCHours(0, 0, 0, 0);
+      const end = new Date(start);
+      end.setUTCDate(end.getUTCDate() + 1);
+      filter.date = { $gte: start, $lt: end };
+    } else if (month) {
+      // month: "YYYY-MM"
+      const [yearStr, monthStr] = month.split("-");
+      const year = Number(yearStr);
+      const m = Number(monthStr);
+      if (!year || !m) {
+        return res.status(400).json({ message: "Invalid month format, expected YYYY-MM" });
+      }
+      const start = new Date(Date.UTC(year, m - 1, 1));
+      const end = new Date(Date.UTC(year, m, 1));
+      filter.date = { $gte: start, $lt: end };
+    }
+
+    const [logs, total] = await Promise.all([
+      ProductionLog.find(filter)
+        .populate("container", "model ratePerUnit quantity")
+        .sort({ date: -1 })
+        .skip(skip)
+        .limit(limit),
+      ProductionLog.countDocuments(filter),
+    ]);
+
+    const containerIds = Array.from(
+      new Set(
+        logs
+          .map((l) => (l.container as any)?._id?.toString())
+          .filter(Boolean)
+      )
+    ).map((id) => new mongoose.Types.ObjectId(id));
+
+    const logIds = logs.map((l) => l._id);
+
+    const [verifiedAggByContainer, verifications] = await Promise.all([
+      ProductionLog.aggregate([
+        {
+          $match: {
+            team: new mongoose.Types.ObjectId(String(teamId)),
+            container: { $in: containerIds },
+          },
+        },
+        {
+          $group: {
+            _id: "$container",
+            totalVerified: { $sum: { $ifNull: ["$verifiedQuantity", 0] } },
+          },
+        },
+      ]),
+      PdiVerification.find({ productionLog: { $in: logIds } }),
+    ]);
+
+    const verifiedByContainer = new Map<string, number>();
+    for (const row of verifiedAggByContainer) {
+      verifiedByContainer.set(String(row._id), row.totalVerified);
+    }
+    const pdiByLog = new Map<string, any>();
+    for (const v of verifications) {
+      pdiByLog.set(String(v.productionLog), v);
+    }
+
+    const out = logs.map((l) => {
+      const container = l.container as any;
+      const totalVerifiedForContainer =
+        verifiedByContainer.get(String(container?._id)) ?? 0;
+      const remainingTarget = (container?.quantity ?? 0) - totalVerifiedForContainer;
+      const pdi = pdiByLog.get(String(l._id));
+      return {
+        _id: l._id,
+        date: l.date,
+        container: container
+          ? {
+              _id: container._id,
+              model: container.model,
+              ratePerUnit: container.ratePerUnit,
+              quantity: container.quantity,
+            }
+          : null,
+        reportedQuantity: l.reportedQuantity,
+        verifiedQuantity: l.verifiedQuantity ?? null,
+        status: l.status,
+        remainingTarget,
+        pdiVerification: pdi
+          ? {
+              verifiedQuantity: pdi.verifiedQuantity,
+              isIncomplete: pdi.isIncomplete,
+              missingQuantity: pdi.missingQuantity ?? 0,
+              remarks: pdi.remarks ?? "",
+            }
+          : null,
+      };
+    });
+
+    return res.status(200).json({
+      logs: out,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasNextPage: page * limit < total,
+      },
+    });
   } catch (err: any) {
     return res.status(500).json({ message: err.message });
   }

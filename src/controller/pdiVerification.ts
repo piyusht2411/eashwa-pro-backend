@@ -104,6 +104,92 @@ export const verifyProductionLog = async (req: Request, res: Response) => {
   }
 };
 
+// ─── PDI: Edit an incomplete verification ─────────────────────────────────────
+export const editIncompleteVerification = async (req: Request, res: Response) => {
+  try {
+    const { verificationId } = req.params;
+    const { verifiedQuantity, remarks } = req.body;
+    const pdiId = req.userId;
+
+    if (verifiedQuantity === undefined || verifiedQuantity === null) {
+      return res.status(400).json({ message: "verifiedQuantity is required" });
+    }
+
+    const verification = await PdiVerification.findById(verificationId);
+    if (!verification) {
+      return res.status(404).json({ message: "Verification not found" });
+    }
+    if (!verification.isIncomplete) {
+      return res.status(409).json({
+        message: "Only incomplete verifications can be edited",
+      });
+    }
+
+    const log = await ProductionLog.findById(verification.productionLog).populate("container");
+    if (!log) return res.status(404).json({ message: "Linked production log not found" });
+
+    if (verifiedQuantity > log.reportedQuantity) {
+      return res.status(400).json({
+        message: `verifiedQuantity (${verifiedQuantity}) cannot exceed reportedQuantity (${log.reportedQuantity})`,
+      });
+    }
+
+    const incomplete = verifiedQuantity < log.reportedQuantity;
+    const missing = log.reportedQuantity - verifiedQuantity;
+
+    verification.verifiedQuantity = verifiedQuantity;
+    verification.isIncomplete = incomplete;
+    verification.missingQuantity = missing;
+    if (remarks !== undefined) verification.remarks = remarks;
+    verification.verifiedAt = new Date();
+    verification.verifiedBy = pdiId as any;
+    await verification.save();
+
+    log.verifiedQuantity = verifiedQuantity;
+    log.status = incomplete ? "incomplete" : "verified";
+    await log.save();
+
+    // ── Notifications ────────────────────────────────────────────────────────
+    const containerDoc = log.container as any;
+    const containerModel: string = containerDoc?.model ?? "container";
+    const containerIdStr: string = containerDoc?._id?.toString() ?? "";
+    const logIdStr: string = log._id.toString();
+
+    await sendPushNotification(
+      log.team,
+      incomplete ? "⚠️ Verification Updated (Partial)" : "✅ Verification Updated",
+      incomplete
+        ? `Your report for ${containerModel} is still partial. ${missing} units unverified.`
+        : `All ${verifiedQuantity} units for ${containerModel} are now verified.`,
+      {
+        type: incomplete ? "pdi_incomplete" : "pdi_verified",
+        logId: logIdStr,
+        containerId: containerIdStr,
+        verifiedQuantity: String(verifiedQuantity),
+      }
+    );
+
+    const admins = await User.find({ role: "admin" }).select("_id");
+    if (admins.length > 0) {
+      await sendPushNotificationToMany(
+        admins.map((a) => a._id),
+        "📋 PDI Verification Updated",
+        `PDI updated verification to ${verifiedQuantity} units for ${containerModel}.${incomplete ? ` Missing: ${missing}.` : " Fully verified."}`,
+        {
+          type: "pdi_verified_admin",
+          logId: logIdStr,
+          containerId: containerIdStr,
+          verifiedQuantity: String(verifiedQuantity),
+        }
+      );
+    }
+
+    return res.status(200).json({ message: "Verification updated", verification });
+  } catch (err: any) {
+    return res.status(500).json({ message: err.message });
+  }
+};
+
 // ─── Get Verifications for a Container (Admin/PDI) ───────────────────────────
 export const getVerificationsByContainer = async (req: Request, res: Response) => {
   try {

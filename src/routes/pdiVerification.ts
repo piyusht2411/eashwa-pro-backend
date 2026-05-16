@@ -4,6 +4,7 @@ import {
   getVerificationsByContainer,
   getVerificationByLog,
   getPdiDashboard,
+  editIncompleteVerification,
 } from "../controller/pdiVerification";
 import { authenticateToken, requireRole } from "../middleware/authMiddleware";
 
@@ -16,6 +17,9 @@ router.get("/dashboard", requireRole("pdi"), getPdiDashboard);
 
 // PDI: verify a production log
 router.post("/log/:logId", requireRole("pdi"), verifyProductionLog);
+
+// PDI: edit an incomplete verification
+router.patch("/verification/:verificationId", requireRole("pdi"), editIncompleteVerification);
 
 // PDI & Admin: get verification for a specific log
 router.get("/log/:logId", requireRole("pdi", "admin"), getVerificationByLog);

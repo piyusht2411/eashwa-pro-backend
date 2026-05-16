@@ -50,6 +50,8 @@ const container_1 = __importDefault(require("./routes/container"));
 const productionLog_1 = __importDefault(require("./routes/productionLog"));
 const pdiVerification_1 = __importDefault(require("./routes/pdiVerification"));
 const payment_1 = __importDefault(require("./routes/payment"));
+const adminDashboard_1 = __importDefault(require("./routes/adminDashboard"));
+const notification_1 = __importDefault(require("./routes/notification"));
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 const port = process.env.PORT || 5000;
@@ -93,6 +95,8 @@ app.use("/api/containers", container_1.default);
 app.use("/api/production-logs", productionLog_1.default);
 app.use("/api/pdi", pdiVerification_1.default);
 app.use("/api/payments", payment_1.default);
+app.use("/api/admin", adminDashboard_1.default);
+app.use("/api/notifications", notification_1.default);
 // ─── Health Check ─────────────────────────────────────────────────────────────
 app.get("/", (req, res) => {
     res.json({

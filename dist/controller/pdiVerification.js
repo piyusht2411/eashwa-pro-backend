@@ -12,7 +12,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getPdiDashboard = exports.getVerificationByLog = exports.getVerificationsByContainer = exports.verifyProductionLog = void 0;
+exports.getPdiDashboard = exports.getVerificationByLog = exports.getVerificationsByContainer = exports.editIncompleteVerification = exports.verifyProductionLog = void 0;
 const pdiVerification_1 = __importDefault(require("../model/pdiVerification"));
 const productionLog_1 = __importDefault(require("../model/productionLog"));
 const user_1 = __importDefault(require("../model/user"));
@@ -93,6 +93,75 @@ const verifyProductionLog = (req, res) => __awaiter(void 0, void 0, void 0, func
     }
 });
 exports.verifyProductionLog = verifyProductionLog;
+// ─── PDI: Edit an incomplete verification ─────────────────────────────────────
+const editIncompleteVerification = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a, _b, _c;
+    try {
+        const { verificationId } = req.params;
+        const { verifiedQuantity, remarks } = req.body;
+        const pdiId = req.userId;
+        if (verifiedQuantity === undefined || verifiedQuantity === null) {
+            return res.status(400).json({ message: "verifiedQuantity is required" });
+        }
+        const verification = yield pdiVerification_1.default.findById(verificationId);
+        if (!verification) {
+            return res.status(404).json({ message: "Verification not found" });
+        }
+        if (!verification.isIncomplete) {
+            return res.status(409).json({
+                message: "Only incomplete verifications can be edited",
+            });
+        }
+        const log = yield productionLog_1.default.findById(verification.productionLog).populate("container");
+        if (!log)
+            return res.status(404).json({ message: "Linked production log not found" });
+        if (verifiedQuantity > log.reportedQuantity) {
+            return res.status(400).json({
+                message: `verifiedQuantity (${verifiedQuantity}) cannot exceed reportedQuantity (${log.reportedQuantity})`,
+            });
+        }
+        const incomplete = verifiedQuantity < log.reportedQuantity;
+        const missing = log.reportedQuantity - verifiedQuantity;
+        verification.verifiedQuantity = verifiedQuantity;
+        verification.isIncomplete = incomplete;
+        verification.missingQuantity = missing;
+        if (remarks !== undefined)
+            verification.remarks = remarks;
+        verification.verifiedAt = new Date();
+        verification.verifiedBy = pdiId;
+        yield verification.save();
+        log.verifiedQuantity = verifiedQuantity;
+        log.status = incomplete ? "incomplete" : "verified";
+        yield log.save();
+        // ── Notifications ────────────────────────────────────────────────────────
+        const containerDoc = log.container;
+        const containerModel = (_a = containerDoc === null || containerDoc === void 0 ? void 0 : containerDoc.model) !== null && _a !== void 0 ? _a : "container";
+        const containerIdStr = (_c = (_b = containerDoc === null || containerDoc === void 0 ? void 0 : containerDoc._id) === null || _b === void 0 ? void 0 : _b.toString()) !== null && _c !== void 0 ? _c : "";
+        const logIdStr = log._id.toString();
+        yield (0, notify_1.sendPushNotification)(log.team, incomplete ? "⚠️ Verification Updated (Partial)" : "✅ Verification Updated", incomplete
+            ? `Your report for ${containerModel} is still partial. ${missing} units unverified.`
+            : `All ${verifiedQuantity} units for ${containerModel} are now verified.`, {
+            type: incomplete ? "pdi_incomplete" : "pdi_verified",
+            logId: logIdStr,
+            containerId: containerIdStr,
+            verifiedQuantity: String(verifiedQuantity),
+        });
+        const admins = yield user_1.default.find({ role: "admin" }).select("_id");
+        if (admins.length > 0) {
+            yield (0, notify_1.sendPushNotificationToMany)(admins.map((a) => a._id), "📋 PDI Verification Updated", `PDI updated verification to ${verifiedQuantity} units for ${containerModel}.${incomplete ? ` Missing: ${missing}.` : " Fully verified."}`, {
+                type: "pdi_verified_admin",
+                logId: logIdStr,
+                containerId: containerIdStr,
+                verifiedQuantity: String(verifiedQuantity),
+            });
+        }
+        return res.status(200).json({ message: "Verification updated", verification });
+    }
+    catch (err) {
+        return res.status(500).json({ message: err.message });
+    }
+});
+exports.editIncompleteVerification = editIncompleteVerification;
 // ─── Get Verifications for a Container (Admin/PDI) ───────────────────────────
 const getVerificationsByContainer = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
