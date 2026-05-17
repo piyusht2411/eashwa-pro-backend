@@ -4,6 +4,7 @@ import ProductionLog from "../model/productionLog";
 import Container from "../model/container";
 import User from "../model/user";
 import { sendPushNotification, sendPushNotificationToMany } from "../utils/notify";
+import { istify } from "../utils/date";
 
 const getPagination = (query: Request["query"]) => {
   const page = Math.max(Number(query.page) || 1, 1);
@@ -184,7 +185,7 @@ export const editIncompleteVerification = async (req: Request, res: Response) =>
       );
     }
 
-    return res.status(200).json({ message: "Verification updated", verification });
+    return res.status(200).json({ message: "Verification updated", verification: istify(verification) });
   } catch (err: any) {
     return res.status(500).json({ message: err.message });
   }

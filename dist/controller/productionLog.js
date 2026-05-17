@@ -19,6 +19,7 @@ const container_1 = __importDefault(require("../model/container"));
 const user_1 = __importDefault(require("../model/user"));
 const pdiVerification_1 = __importDefault(require("../model/pdiVerification"));
 const notify_1 = require("../utils/notify");
+const date_1 = require("../utils/date");
 const getPagination = (query) => {
     const page = Math.max(Number(query.page) || 1, 1);
     const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
@@ -244,7 +245,7 @@ const getTeamHistory = (req, res) => __awaiter(void 0, void 0, void 0, function*
             const pdi = pdiByLog.get(String(l._id));
             return {
                 _id: l._id,
-                date: l.date,
+                date: (0, date_1.toIST)(l.date),
                 container: container
                     ? {
                         _id: container._id,

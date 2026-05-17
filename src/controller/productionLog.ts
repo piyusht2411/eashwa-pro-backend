@@ -5,6 +5,7 @@ import Container from "../model/container";
 import User from "../model/user";
 import PdiVerification from "../model/pdiVerification";
 import { sendPushNotification, sendPushNotificationToMany } from "../utils/notify";
+import { toIST } from "../utils/date";
 
 const getPagination = (query: Request["query"]) => {
   const page = Math.max(Number(query.page) || 1, 1);
@@ -268,7 +269,7 @@ export const getTeamHistory = async (req: Request, res: Response) => {
       const pdi = pdiByLog.get(String(l._id));
       return {
         _id: l._id,
-        date: l.date,
+        date: toIST(l.date),
         container: container
           ? {
               _id: container._id,

@@ -14,6 +14,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.markAllRead = exports.getMyNotifications = void 0;
 const notification_1 = __importDefault(require("../model/notification"));
+const date_1 = require("../utils/date");
 const getPagination = (query) => {
     const page = Math.max(Number(query.page) || 1, 1);
     const limit = Math.min(Math.max(Number(query.limit) || 30, 1), 100);
@@ -34,7 +35,7 @@ const getMyNotifications = (req, res) => __awaiter(void 0, void 0, void 0, funct
             notification_1.default.countDocuments({ recipient: userId, isRead: false }),
         ]);
         return res.status(200).json({
-            notifications,
+            notifications: (0, date_1.istify)(notifications),
             unreadCount,
             pagination: {
                 page,

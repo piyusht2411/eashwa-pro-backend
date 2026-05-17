@@ -5,6 +5,7 @@ import PdiVerification from "../model/pdiVerification";
 import Payment from "../model/payment";
 import Container from "../model/container";
 import User from "../model/user";
+import { istify, toIST } from "../utils/date";
 
 const getPagination = (query: Request["query"]) => {
   const page = Math.max(Number(query.page) || 1, 1);
@@ -178,7 +179,7 @@ export const getAdminReport = async (req: Request, res: Response) => {
         totalPaid,
         totalRemaining,
       },
-      logs,
+      logs: istify(logs),
       pagination: {
         page,
         limit,
@@ -246,39 +247,51 @@ export const getMonitorData = async (req: Request, res: Response) => {
       type: "production_log" | "pdi_verification" | "payment";
       description: string;
       timestamp: Date;
+      _ts: number;
     }> = [];
 
     for (const l of recentLogs) {
       const teamName = (l.team as any)?.name ?? "A team";
       const containerModel = (l.container as any)?.model ?? "container";
+      const ts: Date = (l as any).createdAt;
       activity.push({
         type: "production_log",
         description: `${teamName} logged ${l.reportedQuantity} units for ${containerModel}`,
-        timestamp: (l as any).createdAt,
+        timestamp: ts,
+        _ts: new Date(ts).getTime(),
       });
     }
     for (const v of recentVerifications) {
       const containerModel = (v.container as any)?.model ?? "container";
       const verifierName = (v.verifiedBy as any)?.name ?? "PDI";
+      const ts: Date = (v as any).createdAt;
       activity.push({
         type: "pdi_verification",
         description: `${verifierName} verified ${v.verifiedQuantity} units for ${containerModel}${v.isIncomplete ? ` (missing ${v.missingQuantity ?? 0})` : ""}`,
-        timestamp: (v as any).createdAt,
+        timestamp: ts,
+        _ts: new Date(ts).getTime(),
       });
     }
     for (const p of recentPayments) {
       const containerModel = (p.container as any)?.model ?? "container";
       const teamName = (p.team as any)?.name ?? "team";
+      const ts: Date = (p as any).updatedAt;
       activity.push({
         type: "payment",
         description: `Payment ledger updated for ${containerModel} (${teamName}): paid ₹${p.paidAmount} of ₹${p.totalAmount}`,
-        timestamp: (p as any).updatedAt,
+        timestamp: ts,
+        _ts: new Date(ts).getTime(),
       });
     }
 
     const recentActivity = activity
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-      .slice(0, 10);
+      .sort((a, b) => b._ts - a._ts)
+      .slice(0, 10)
+      .map((a) => ({
+        type: a.type,
+        description: a.description,
+        timestamp: toIST(a.timestamp),
+      }));
 
     return res.status(200).json({
       activeContainers,

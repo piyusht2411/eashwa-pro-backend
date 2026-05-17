@@ -19,6 +19,7 @@ const pdiVerification_1 = __importDefault(require("../model/pdiVerification"));
 const payment_1 = __importDefault(require("../model/payment"));
 const container_1 = __importDefault(require("../model/container"));
 const user_1 = __importDefault(require("../model/user"));
+const date_1 = require("../utils/date");
 const getPagination = (query) => {
     const page = Math.max(Number(query.page) || 1, 1);
     const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
@@ -183,7 +184,7 @@ const getAdminReport = (req, res) => __awaiter(void 0, void 0, void 0, function*
                 totalPaid,
                 totalRemaining,
             },
-            logs,
+            logs: (0, date_1.istify)(logs),
             pagination: {
                 page,
                 limit,
@@ -241,33 +242,44 @@ const getMonitorData = (req, res) => __awaiter(void 0, void 0, void 0, function*
         for (const l of recentLogs) {
             const teamName = (_b = (_a = l.team) === null || _a === void 0 ? void 0 : _a.name) !== null && _b !== void 0 ? _b : "A team";
             const containerModel = (_d = (_c = l.container) === null || _c === void 0 ? void 0 : _c.model) !== null && _d !== void 0 ? _d : "container";
+            const ts = l.createdAt;
             activity.push({
                 type: "production_log",
                 description: `${teamName} logged ${l.reportedQuantity} units for ${containerModel}`,
-                timestamp: l.createdAt,
+                timestamp: ts,
+                _ts: new Date(ts).getTime(),
             });
         }
         for (const v of recentVerifications) {
             const containerModel = (_f = (_e = v.container) === null || _e === void 0 ? void 0 : _e.model) !== null && _f !== void 0 ? _f : "container";
             const verifierName = (_h = (_g = v.verifiedBy) === null || _g === void 0 ? void 0 : _g.name) !== null && _h !== void 0 ? _h : "PDI";
+            const ts = v.createdAt;
             activity.push({
                 type: "pdi_verification",
                 description: `${verifierName} verified ${v.verifiedQuantity} units for ${containerModel}${v.isIncomplete ? ` (missing ${(_j = v.missingQuantity) !== null && _j !== void 0 ? _j : 0})` : ""}`,
-                timestamp: v.createdAt,
+                timestamp: ts,
+                _ts: new Date(ts).getTime(),
             });
         }
         for (const p of recentPayments) {
             const containerModel = (_l = (_k = p.container) === null || _k === void 0 ? void 0 : _k.model) !== null && _l !== void 0 ? _l : "container";
             const teamName = (_o = (_m = p.team) === null || _m === void 0 ? void 0 : _m.name) !== null && _o !== void 0 ? _o : "team";
+            const ts = p.updatedAt;
             activity.push({
                 type: "payment",
                 description: `Payment ledger updated for ${containerModel} (${teamName}): paid ₹${p.paidAmount} of ₹${p.totalAmount}`,
-                timestamp: p.updatedAt,
+                timestamp: ts,
+                _ts: new Date(ts).getTime(),
             });
         }
         const recentActivity = activity
-            .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-            .slice(0, 10);
+            .sort((a, b) => b._ts - a._ts)
+            .slice(0, 10)
+            .map((a) => ({
+            type: a.type,
+            description: a.description,
+            timestamp: (0, date_1.toIST)(a.timestamp),
+        }));
         return res.status(200).json({
             activeContainers,
             totalTeams,

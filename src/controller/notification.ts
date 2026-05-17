@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import Notification from "../model/notification";
+import { istify } from "../utils/date";
 
 const getPagination = (query: Request["query"]) => {
   const page = Math.max(Number(query.page) || 1, 1);
@@ -24,7 +25,7 @@ export const getMyNotifications = async (req: Request, res: Response) => {
     ]);
 
     return res.status(200).json({
-      notifications,
+      notifications: istify(notifications),
       unreadCount,
       pagination: {
         page,

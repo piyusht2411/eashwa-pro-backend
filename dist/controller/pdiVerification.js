@@ -17,6 +17,7 @@ const pdiVerification_1 = __importDefault(require("../model/pdiVerification"));
 const productionLog_1 = __importDefault(require("../model/productionLog"));
 const user_1 = __importDefault(require("../model/user"));
 const notify_1 = require("../utils/notify");
+const date_1 = require("../utils/date");
 const getPagination = (query) => {
     const page = Math.max(Number(query.page) || 1, 1);
     const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
@@ -155,7 +156,7 @@ const editIncompleteVerification = (req, res) => __awaiter(void 0, void 0, void 
                 verifiedQuantity: String(verifiedQuantity),
             });
         }
-        return res.status(200).json({ message: "Verification updated", verification });
+        return res.status(200).json({ message: "Verification updated", verification: (0, date_1.istify)(verification) });
     }
     catch (err) {
         return res.status(500).json({ message: err.message });
