@@ -80,6 +80,7 @@ const corsOptions = {
         "https://eashwastock.in",
         "https://www.eashwastock.in",
         "https://dummy-phi-eight.vercel.app",
+        "http://localhost:8081"
     ],
     credentials: true,
 };
