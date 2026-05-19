@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.istify = exports.toIST = void 0;
+exports.istify = exports.toISTDateOnly = exports.toIST = void 0;
 // IST is UTC+5:30 with no DST.
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 const pad = (n, w = 2) => String(n).padStart(w, "0");
@@ -25,12 +25,16 @@ const toIST = (d) => {
     return `${y}-${m}-${day}T${hh}:${mm}:${ss}.${ms}+05:30`;
 };
 exports.toIST = toIST;
+const toISTDateOnly = (d) => {
+    const ist = (0, exports.toIST)(d);
+    return ist ? ist.slice(0, 10) : null;
+};
+exports.toISTDateOnly = toISTDateOnly;
 /**
  * Recursively walk a plain object/array and convert known date-ish fields to IST strings.
  * Works on mongoose lean/toObject output. Non-date fields are returned untouched.
  */
 const DATE_KEYS = new Set([
-    "date",
     "createdAt",
     "updatedAt",
     "verifiedAt",
@@ -38,6 +42,7 @@ const DATE_KEYS = new Set([
     "timestamp",
     "tokenExpire",
 ]);
+const DATE_ONLY_KEYS = new Set(["date"]);
 const istify = (input) => {
     if (input === null || input === undefined)
         return input;
@@ -51,7 +56,15 @@ const istify = (input) => {
         const out = Array.isArray(src) ? [] : {};
         for (const key of Object.keys(src)) {
             const val = src[key];
-            if (val instanceof Date && DATE_KEYS.has(key)) {
+            if (val instanceof Date && DATE_ONLY_KEYS.has(key)) {
+                out[key] = (0, exports.toISTDateOnly)(val);
+            }
+            else if (DATE_ONLY_KEYS.has(key) &&
+                typeof val === "string" &&
+                !isNaN(new Date(val).getTime())) {
+                out[key] = (0, exports.toISTDateOnly)(val);
+            }
+            else if (val instanceof Date && DATE_KEYS.has(key)) {
                 out[key] = (0, exports.toIST)(val);
             }
             else if (DATE_KEYS.has(key) &&

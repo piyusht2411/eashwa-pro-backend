@@ -12,7 +12,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getMonitorData = exports.getAdminReport = exports.getAdminDashboardSummary = void 0;
+exports.getMonitorData = exports.exportAdminReport = exports.getAdminReport = exports.getAdminDashboardSummary = void 0;
 const mongoose_1 = __importDefault(require("mongoose"));
 const productionLog_1 = __importDefault(require("../model/productionLog"));
 const pdiVerification_1 = __importDefault(require("../model/pdiVerification"));
@@ -200,6 +200,83 @@ const getAdminReport = (req, res) => __awaiter(void 0, void 0, void 0, function*
 });
 exports.getAdminReport = getAdminReport;
 // ─── Admin Monitor (live counts) ─────────────────────────────────────────────
+const exportAdminReport = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { startDate, endDate, teamId } = req.query;
+        const match = {};
+        if (startDate || endDate) {
+            match.date = {};
+            if (startDate)
+                match.date.$gte = new Date(String(startDate));
+            if (endDate)
+                match.date.$lte = new Date(String(endDate));
+        }
+        if (teamId) {
+            match.team = new mongoose_1.default.Types.ObjectId(String(teamId));
+        }
+        const logs = yield productionLog_1.default.aggregate([
+            { $match: match },
+            {
+                $lookup: {
+                    from: "pdiverifications",
+                    localField: "_id",
+                    foreignField: "productionLog",
+                    as: "pdi",
+                },
+            },
+            { $unwind: { path: "$pdi", preserveNullAndEmptyArrays: true } },
+            {
+                $lookup: {
+                    from: "containers",
+                    localField: "container",
+                    foreignField: "_id",
+                    as: "container",
+                },
+            },
+            { $unwind: { path: "$container", preserveNullAndEmptyArrays: true } },
+            {
+                $lookup: {
+                    from: "users",
+                    localField: "team",
+                    foreignField: "_id",
+                    as: "team",
+                },
+            },
+            { $unwind: { path: "$team", preserveNullAndEmptyArrays: true } },
+            { $sort: { date: -1 } },
+            {
+                $project: {
+                    _id: 1,
+                    date: 1,
+                    reportedQuantity: 1,
+                    verifiedQuantity: { $ifNull: ["$pdi.verifiedQuantity", "$verifiedQuantity"] },
+                    status: 1,
+                    missingQuantity: { $ifNull: ["$pdi.missingQuantity", 0] },
+                    remarks: { $ifNull: ["$pdi.remarks", ""] },
+                    container: {
+                        _id: "$container._id",
+                        model: "$container.model",
+                        ratePerUnit: "$container.ratePerUnit",
+                    },
+                    team: { _id: "$team._id", name: "$team.name" },
+                },
+            },
+        ]);
+        return res.status(200).json({
+            logs: (0, date_1.istify)(logs),
+            total: logs.length,
+            filters: {
+                startDate: startDate || null,
+                endDate: endDate || null,
+                teamId: teamId || null,
+            },
+        });
+    }
+    catch (err) {
+        return res.status(500).json({ message: err.message });
+    }
+});
+exports.exportAdminReport = exportAdminReport;
 const getMonitorData = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o;
     try {
