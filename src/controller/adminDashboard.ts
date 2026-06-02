@@ -6,6 +6,7 @@ import Payment from "../model/payment";
 import Container from "../model/container";
 import User from "../model/user";
 import { istify, toIST } from "../utils/date";
+import { computePenalty, getVerifiedByContainer } from "../utils/penalty";
 
 const getPagination = (query: Request["query"]) => {
   const page = Math.max(Number(query.page) || 1, 1);
@@ -39,12 +40,31 @@ export const getAdminDashboardSummary = async (req: Request, res: Response) => {
     const paidAmount = paymentAgg[0]?.paidAmount ?? 0;
     const remainingAmount = paymentAgg[0]?.remainingAmount ?? 0;
 
+    // Live penalty across all non-cancelled containers
+    const penaltyContainers = await Container.find({ status: { $ne: "cancelled" } }).select(
+      "quantity penaltyPerUnit"
+    );
+    const verifiedMap = await getVerifiedByContainer(penaltyContainers.map((c) => c._id));
+    let totalPenalty = 0;
+    let totalPendingVehicles = 0;
+    for (const c of penaltyContainers) {
+      const { pendingQuantity, totalPenalty: p } = computePenalty(
+        c.quantity,
+        verifiedMap.get(String(c._id)) ?? 0,
+        c.penaltyPerUnit ?? 0
+      );
+      totalPenalty += p;
+      totalPendingVehicles += pendingQuantity;
+    }
+
     return res.status(200).json({
       totalProduction,
       pendingVerify,
       totalAmount,
       paidAmount,
       remainingAmount,
+      totalPenalty,
+      totalPendingVehicles,
     });
   } catch (err: any) {
     return res.status(500).json({ message: err.message });

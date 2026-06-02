@@ -21,6 +21,11 @@ const containerSchema = new mongoose_1.Schema({
         required: true,
         min: 0,
     },
+    penaltyPerUnit: {
+        type: Number,
+        default: 0,
+        min: 0,
+    },
     assignedTeam: {
         type: mongoose_1.Schema.Types.ObjectId,
         ref: "User",

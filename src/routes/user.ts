@@ -4,6 +4,7 @@ import {
   login,
   getMe,
   updateFcmToken,
+  changePassword,
   getAllUsers,
   getUserById,
   updateUser,
@@ -22,6 +23,7 @@ router.post("/logout", logout);
 // Protected
 router.get("/me", authenticateToken, getMe);
 router.patch("/fcm-token", authenticateToken, updateFcmToken);
+router.patch("/change-password", changePassword);
 
 // Admin only
 router.get("/all", authenticateToken, requireRole("admin"), getAllUsers);

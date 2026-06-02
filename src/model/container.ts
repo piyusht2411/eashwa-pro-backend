@@ -22,6 +22,11 @@ const containerSchema = new Schema<IContainer>(
       required: true,
       min: 0,
     },
+    penaltyPerUnit: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     assignedTeam: {
       type: Schema.Types.ObjectId,
       ref: "User",

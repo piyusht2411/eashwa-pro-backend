@@ -4,6 +4,7 @@ import {
   getAllContainers,
   getContainerById,
   updateContainerStatus,
+  updateContainer,
   deleteContainer,
 } from "../controller/container";
 import { authenticateToken, requireRole } from "../middleware/authMiddleware";
@@ -24,6 +25,9 @@ router.get("/:id", requireRole("admin", "team", "pdi"), getContainerById);
 
 // Admin only: update status
 router.patch("/:id/status", requireRole("admin"), updateContainerStatus);
+
+// Admin only: update container (penalty / core fields)
+router.patch("/:id", requireRole("admin"), updateContainer);
 
 // Admin only: delete
 router.delete("/:id", requireRole("admin"), deleteContainer);

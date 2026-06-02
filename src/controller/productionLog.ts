@@ -130,7 +130,7 @@ export const getPendingLogs = async (req: Request, res: Response) => {
     const [logs, total] = await Promise.all([
       ProductionLog.find(filter)
         .populate("team", "name email")
-        .populate("container", "model quantity ratePerUnit assignedTeam")
+        .populate("container", "model quantity ratePerUnit penaltyPerUnit assignedTeam")
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),

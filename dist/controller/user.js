@@ -12,7 +12,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.logout = exports.deleteUser = exports.updateUser = exports.getUserById = exports.getAllUsers = exports.updateFcmToken = exports.getMe = exports.login = exports.register = void 0;
+exports.logout = exports.changePassword = exports.deleteUser = exports.updateUser = exports.getUserById = exports.getAllUsers = exports.updateFcmToken = exports.getMe = exports.login = exports.register = void 0;
 const bcrypt_1 = __importDefault(require("bcrypt"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const user_1 = __importDefault(require("../model/user"));
@@ -267,6 +267,41 @@ const deleteUser = (req, res) => __awaiter(void 0, void 0, void 0, function* () 
     }
 });
 exports.deleteUser = deleteUser;
+// ─── Change Password (by Email) ───────────────────────────────────────────────
+const changePassword = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { email, currentPassword, newPassword } = req.body;
+        if (!email || !currentPassword || !newPassword) {
+            return res
+                .status(400)
+                .json({ message: "email, currentPassword and newPassword are required" });
+        }
+        if (newPassword.length < 6) {
+            return res
+                .status(400)
+                .json({ message: "newPassword must be at least 6 characters" });
+        }
+        if (currentPassword === newPassword) {
+            return res
+                .status(400)
+                .json({ message: "New password must be different from current password" });
+        }
+        const user = yield user_1.default.findOne({ email: email.toLowerCase().trim() });
+        if (!user)
+            return res.status(404).json({ message: "User not found" });
+        const isMatch = yield bcrypt_1.default.compare(currentPassword, user.password);
+        if (!isMatch) {
+            return res.status(401).json({ message: "Current password is incorrect" });
+        }
+        user.password = newPassword; // hashed automatically by pre-save hook
+        yield user.save();
+        return res.status(200).json({ message: "Password changed successfully" });
+    }
+    catch (err) {
+        return res.status(500).json({ message: err.message });
+    }
+});
+exports.changePassword = changePassword;
 // ─── Logout ───────────────────────────────────────────────────────────────────
 const logout = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     res.clearCookie("refreshToken");

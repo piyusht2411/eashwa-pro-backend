@@ -23,6 +23,7 @@ export interface IContainer {
   quantity: number;                 // total assigned quantity
   date: Date;                       // assignment date
   ratePerUnit: number;              // fixed price per scooter (₹)
+  penaltyPerUnit: number;           // penalty per pending/undelivered scooter (₹)
   assignedTeam: Types.ObjectId;    // ref → User (role: team)
   status: "active" | "completed" | "cancelled";
   createdBy: Types.ObjectId;       // ref → User (role: admin)

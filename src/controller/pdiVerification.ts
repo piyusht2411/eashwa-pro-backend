@@ -5,6 +5,7 @@ import Container from "../model/container";
 import User from "../model/user";
 import { sendPushNotification, sendPushNotificationToMany } from "../utils/notify";
 import { istify } from "../utils/date";
+import { computePenalty, getVerifiedByContainer } from "../utils/penalty";
 
 const getPagination = (query: Request["query"]) => {
   const page = Math.max(Number(query.page) || 1, 1);
@@ -191,6 +192,66 @@ export const editIncompleteVerification = async (req: Request, res: Response) =>
   }
 };
 
+// ─── PDI: Unverify a Production Log (revert to pending) ──────────────────────
+// Deletes the PDI verification record and sets the log back to "pending" so it
+// re-enters the verification queue. Notifies the team and admins.
+export const unverifyProductionLog = async (req: Request, res: Response) => {
+  try {
+    const { logId } = req.params;
+
+    const log = await ProductionLog.findById(logId).populate("container");
+    if (!log) return res.status(404).json({ message: "Production log not found" });
+
+    const verification = await PdiVerification.findOne({ productionLog: logId });
+    if (!verification && log.status === "pending") {
+      return res.status(409).json({ message: "This log is already pending" });
+    }
+
+    if (verification) {
+      await PdiVerification.deleteOne({ _id: verification._id });
+    }
+
+    // Revert the production log to pending
+    log.verifiedQuantity = null as any;
+    log.status = "pending";
+    await log.save();
+
+    // ── Notifications ──────────────────────────────────────────────────────
+    const containerDoc = log.container as any;
+    const containerModel: string = containerDoc?.model ?? "container";
+    const containerIdStr: string = containerDoc?._id?.toString() ?? "";
+
+    await sendPushNotification(
+      log.team,
+      "↩️ Verification Reverted",
+      `Your report for ${containerModel} was sent back for re-verification by PDI.`,
+      {
+        type: "pdi_unverified",
+        logId,
+        containerId: containerIdStr,
+      }
+    );
+
+    const admins = await User.find({ role: "admin" }).select("_id");
+    if (admins.length > 0) {
+      await sendPushNotificationToMany(
+        admins.map((a) => a._id),
+        "↩️ PDI Verification Reverted",
+        `A verification for ${containerModel} was reverted to pending.`,
+        {
+          type: "pdi_unverified_admin",
+          logId,
+          containerId: containerIdStr,
+        }
+      );
+    }
+
+    return res.status(200).json({ message: "Verification reverted to pending", logId });
+  } catch (err: any) {
+    return res.status(500).json({ message: err.message });
+  }
+};
+
 // ─── Get Verifications for a Container (Admin/PDI) ───────────────────────────
 export const getVerificationsByContainer = async (req: Request, res: Response) => {
   try {
@@ -248,18 +309,35 @@ export const getPdiDashboard = async (req: Request, res: Response) => {
     const { page, limit, skip } = getPagination(req.query);
 
     const pendingCount = await ProductionLog.countDocuments({ status: "pending" });
-    const [verifiedByMe, total] = await Promise.all([
+    const [verifiedByMe, total, penaltyContainers] = await Promise.all([
       PdiVerification.find({ verifiedBy: pdiId })
         .populate("productionLog", "date reportedQuantity")
-        .populate("container", "model")
+        .populate("container", "model penaltyPerUnit quantity")
         .sort({ verifiedAt: -1 })
         .skip(skip)
         .limit(limit),
       PdiVerification.countDocuments({ verifiedBy: pdiId }),
+      // Live penalty across all non-cancelled containers
+      Container.find({ status: { $ne: "cancelled" } }).select("quantity penaltyPerUnit"),
     ]);
+
+    const verifiedMap = await getVerifiedByContainer(penaltyContainers.map((c) => c._id));
+    let totalPenalty = 0;
+    let totalPendingVehicles = 0;
+    for (const c of penaltyContainers) {
+      const { pendingQuantity, totalPenalty: p } = computePenalty(
+        c.quantity,
+        verifiedMap.get(String(c._id)) ?? 0,
+        c.penaltyPerUnit ?? 0
+      );
+      totalPenalty += p;
+      totalPendingVehicles += pendingQuantity;
+    }
 
     return res.status(200).json({
       pendingCount,
+      totalPenalty,
+      totalPendingVehicles,
       recentVerifications: verifiedByMe,
       pagination: {
         page,

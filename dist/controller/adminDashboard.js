@@ -20,6 +20,7 @@ const payment_1 = __importDefault(require("../model/payment"));
 const container_1 = __importDefault(require("../model/container"));
 const user_1 = __importDefault(require("../model/user"));
 const date_1 = require("../utils/date");
+const penalty_1 = require("../utils/penalty");
 const getPagination = (query) => {
     const page = Math.max(Number(query.page) || 1, 1);
     const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
@@ -28,7 +29,7 @@ const getPagination = (query) => {
 };
 // ─── Admin Dashboard Summary ─────────────────────────────────────────────────
 const getAdminDashboardSummary = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
     try {
         const [verifiedAgg, pendingVerify, paymentAgg] = yield Promise.all([
             pdiVerification_1.default.aggregate([
@@ -50,12 +51,24 @@ const getAdminDashboardSummary = (req, res) => __awaiter(void 0, void 0, void 0,
         const totalAmount = (_d = (_c = paymentAgg[0]) === null || _c === void 0 ? void 0 : _c.totalAmount) !== null && _d !== void 0 ? _d : 0;
         const paidAmount = (_f = (_e = paymentAgg[0]) === null || _e === void 0 ? void 0 : _e.paidAmount) !== null && _f !== void 0 ? _f : 0;
         const remainingAmount = (_h = (_g = paymentAgg[0]) === null || _g === void 0 ? void 0 : _g.remainingAmount) !== null && _h !== void 0 ? _h : 0;
+        // Live penalty across all non-cancelled containers
+        const penaltyContainers = yield container_1.default.find({ status: { $ne: "cancelled" } }).select("quantity penaltyPerUnit");
+        const verifiedMap = yield (0, penalty_1.getVerifiedByContainer)(penaltyContainers.map((c) => c._id));
+        let totalPenalty = 0;
+        let totalPendingVehicles = 0;
+        for (const c of penaltyContainers) {
+            const { pendingQuantity, totalPenalty: p } = (0, penalty_1.computePenalty)(c.quantity, (_j = verifiedMap.get(String(c._id))) !== null && _j !== void 0 ? _j : 0, (_k = c.penaltyPerUnit) !== null && _k !== void 0 ? _k : 0);
+            totalPenalty += p;
+            totalPendingVehicles += pendingQuantity;
+        }
         return res.status(200).json({
             totalProduction,
             pendingVerify,
             totalAmount,
             paidAmount,
             remainingAmount,
+            totalPenalty,
+            totalPendingVehicles,
         });
     }
     catch (err) {

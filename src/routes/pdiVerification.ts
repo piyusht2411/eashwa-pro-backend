@@ -5,6 +5,7 @@ import {
   getVerificationByLog,
   getPdiDashboard,
   editIncompleteVerification,
+  unverifyProductionLog,
 } from "../controller/pdiVerification";
 import { authenticateToken, requireRole } from "../middleware/authMiddleware";
 
@@ -17,6 +18,9 @@ router.get("/dashboard", requireRole("pdi"), getPdiDashboard);
 
 // PDI: verify a production log
 router.post("/log/:logId", requireRole("pdi"), verifyProductionLog);
+
+// PDI: unverify a production log (revert to pending)
+router.delete("/log/:logId", requireRole("pdi"), unverifyProductionLog);
 
 // PDI: edit an incomplete verification
 router.patch("/verification/:verificationId", requireRole("pdi"), editIncompleteVerification);

@@ -14,6 +14,8 @@ router.get("/", (0, authMiddleware_1.requireRole)("admin", "team", "pdi"), conta
 router.get("/:id", (0, authMiddleware_1.requireRole)("admin", "team", "pdi"), container_1.getContainerById);
 // Admin only: update status
 router.patch("/:id/status", (0, authMiddleware_1.requireRole)("admin"), container_1.updateContainerStatus);
+// Admin only: update container (penalty / core fields)
+router.patch("/:id", (0, authMiddleware_1.requireRole)("admin"), container_1.updateContainer);
 // Admin only: delete
 router.delete("/:id", (0, authMiddleware_1.requireRole)("admin"), container_1.deleteContainer);
 exports.default = router;

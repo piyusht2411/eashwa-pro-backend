@@ -11,6 +11,7 @@ router.post("/logout", user_1.logout);
 // Protected
 router.get("/me", authMiddleware_1.authenticateToken, user_1.getMe);
 router.patch("/fcm-token", authMiddleware_1.authenticateToken, user_1.updateFcmToken);
+router.patch("/change-password", user_1.changePassword);
 // Admin only
 router.get("/all", authMiddleware_1.authenticateToken, (0, authMiddleware_1.requireRole)("admin"), user_1.getAllUsers);
 router.get("/:id", authMiddleware_1.authenticateToken, (0, authMiddleware_1.requireRole)("admin"), user_1.getUserById);

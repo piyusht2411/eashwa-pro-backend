@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import Container from "../model/container";
 import User from "../model/user";
 import { sendPushNotification } from "../utils/notify";
+import { computePenalty, getVerifiedByContainer } from "../utils/penalty";
 
 const getPagination = (query: Request["query"]) => {
   const page = Math.max(Number(query.page) || 1, 1);
@@ -13,12 +14,16 @@ const getPagination = (query: Request["query"]) => {
 // ─── Create Container (Admin only) ────────────────────────────────────────────
 export const createContainer = async (req: Request, res: Response) => {
   try {
-    const { model, quantity, date, ratePerUnit, assignedTeam } = req.body;
+    const { model, quantity, date, ratePerUnit, penaltyPerUnit, assignedTeam } = req.body;
 
     if (!model || !quantity || !date || !ratePerUnit || !assignedTeam) {
       return res.status(400).json({
         message: "model, quantity, date, ratePerUnit and assignedTeam are required",
       });
+    }
+
+    if (penaltyPerUnit !== undefined && (Number(penaltyPerUnit) < 0 || Number.isNaN(Number(penaltyPerUnit)))) {
+      return res.status(400).json({ message: "penaltyPerUnit must be a non-negative number" });
     }
 
     // Ensure assigned user is a team member
@@ -32,6 +37,7 @@ export const createContainer = async (req: Request, res: Response) => {
       quantity,
       date: new Date(date),
       ratePerUnit,
+      penaltyPerUnit: penaltyPerUnit ?? 0,
       assignedTeam,
       createdBy: req.userId,
     });
@@ -75,8 +81,19 @@ export const getAllContainers = async (req: Request, res: Response) => {
       Container.countDocuments(filter),
     ]);
 
+    // Attach live penalty figures (pending vehicles × penaltyPerUnit)
+    const verifiedMap = await getVerifiedByContainer(containers.map((c) => c._id));
+    const containersWithPenalty = containers.map((c) => {
+      const penalty = computePenalty(
+        c.quantity,
+        verifiedMap.get(String(c._id)) ?? 0,
+        c.penaltyPerUnit ?? 0
+      );
+      return { ...c.toObject(), ...penalty };
+    });
+
     return res.status(200).json({
-      containers,
+      containers: containersWithPenalty,
       pagination: {
         page,
         limit,
@@ -108,7 +125,14 @@ export const getContainerById = async (req: Request, res: Response) => {
       return res.status(403).json({ message: "Access denied" });
     }
 
-    return res.status(200).json({ container });
+    const verifiedMap = await getVerifiedByContainer([container._id]);
+    const penalty = computePenalty(
+      container.quantity,
+      verifiedMap.get(String(container._id)) ?? 0,
+      container.penaltyPerUnit ?? 0
+    );
+
+    return res.status(200).json({ container: { ...container.toObject(), ...penalty } });
   } catch (err: any) {
     return res.status(500).json({ message: err.message });
   }
@@ -132,6 +156,62 @@ export const updateContainerStatus = async (req: Request, res: Response) => {
     if (!container) return res.status(404).json({ message: "Container not found" });
 
     return res.status(200).json({ message: "Container status updated", container });
+  } catch (err: any) {
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── Update Container (Admin only) ───────────────────────────────────────────
+// Allows editing the penalty per vehicle and other core fields.
+export const updateContainer = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { model, quantity, date, ratePerUnit, penaltyPerUnit, status } = req.body;
+
+    const update: any = {};
+    if (model !== undefined) update.model = model;
+    if (quantity !== undefined) {
+      if (Number(quantity) < 1) return res.status(400).json({ message: "quantity must be at least 1" });
+      update.quantity = Number(quantity);
+    }
+    if (date !== undefined) update.date = new Date(date);
+    if (ratePerUnit !== undefined) {
+      if (Number(ratePerUnit) < 0) return res.status(400).json({ message: "ratePerUnit must be non-negative" });
+      update.ratePerUnit = Number(ratePerUnit);
+    }
+    if (penaltyPerUnit !== undefined) {
+      if (Number(penaltyPerUnit) < 0 || Number.isNaN(Number(penaltyPerUnit))) {
+        return res.status(400).json({ message: "penaltyPerUnit must be a non-negative number" });
+      }
+      update.penaltyPerUnit = Number(penaltyPerUnit);
+    }
+    if (status !== undefined) {
+      if (!["active", "completed", "cancelled"].includes(status)) {
+        return res.status(400).json({ message: "Invalid status" });
+      }
+      update.status = status;
+    }
+
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({ message: "No valid fields to update" });
+    }
+
+    const container = await Container.findByIdAndUpdate(id, update, { new: true })
+      .populate("assignedTeam", "name email phone")
+      .populate("createdBy", "name email");
+    if (!container) return res.status(404).json({ message: "Container not found" });
+
+    const verifiedMap = await getVerifiedByContainer([container._id]);
+    const penalty = computePenalty(
+      container.quantity,
+      verifiedMap.get(String(container._id)) ?? 0,
+      container.penaltyPerUnit ?? 0
+    );
+
+    return res.status(200).json({
+      message: "Container updated",
+      container: { ...container.toObject(), ...penalty },
+    });
   } catch (err: any) {
     return res.status(500).json({ message: err.message });
   }

@@ -12,12 +12,14 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getPdiDashboard = exports.getVerificationByLog = exports.getVerificationsByContainer = exports.editIncompleteVerification = exports.verifyProductionLog = void 0;
+exports.getPdiDashboard = exports.getVerificationByLog = exports.getVerificationsByContainer = exports.unverifyProductionLog = exports.editIncompleteVerification = exports.verifyProductionLog = void 0;
 const pdiVerification_1 = __importDefault(require("../model/pdiVerification"));
 const productionLog_1 = __importDefault(require("../model/productionLog"));
+const container_1 = __importDefault(require("../model/container"));
 const user_1 = __importDefault(require("../model/user"));
 const notify_1 = require("../utils/notify");
 const date_1 = require("../utils/date");
+const penalty_1 = require("../utils/penalty");
 const getPagination = (query) => {
     const page = Math.max(Number(query.page) || 1, 1);
     const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
@@ -163,6 +165,51 @@ const editIncompleteVerification = (req, res) => __awaiter(void 0, void 0, void 
     }
 });
 exports.editIncompleteVerification = editIncompleteVerification;
+// ─── PDI: Unverify a Production Log (revert to pending) ──────────────────────
+// Deletes the PDI verification record and sets the log back to "pending" so it
+// re-enters the verification queue. Notifies the team and admins.
+const unverifyProductionLog = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a, _b, _c;
+    try {
+        const { logId } = req.params;
+        const log = yield productionLog_1.default.findById(logId).populate("container");
+        if (!log)
+            return res.status(404).json({ message: "Production log not found" });
+        const verification = yield pdiVerification_1.default.findOne({ productionLog: logId });
+        if (!verification && log.status === "pending") {
+            return res.status(409).json({ message: "This log is already pending" });
+        }
+        if (verification) {
+            yield pdiVerification_1.default.deleteOne({ _id: verification._id });
+        }
+        // Revert the production log to pending
+        log.verifiedQuantity = null;
+        log.status = "pending";
+        yield log.save();
+        // ── Notifications ──────────────────────────────────────────────────────
+        const containerDoc = log.container;
+        const containerModel = (_a = containerDoc === null || containerDoc === void 0 ? void 0 : containerDoc.model) !== null && _a !== void 0 ? _a : "container";
+        const containerIdStr = (_c = (_b = containerDoc === null || containerDoc === void 0 ? void 0 : containerDoc._id) === null || _b === void 0 ? void 0 : _b.toString()) !== null && _c !== void 0 ? _c : "";
+        yield (0, notify_1.sendPushNotification)(log.team, "↩️ Verification Reverted", `Your report for ${containerModel} was sent back for re-verification by PDI.`, {
+            type: "pdi_unverified",
+            logId,
+            containerId: containerIdStr,
+        });
+        const admins = yield user_1.default.find({ role: "admin" }).select("_id");
+        if (admins.length > 0) {
+            yield (0, notify_1.sendPushNotificationToMany)(admins.map((a) => a._id), "↩️ PDI Verification Reverted", `A verification for ${containerModel} was reverted to pending.`, {
+                type: "pdi_unverified_admin",
+                logId,
+                containerId: containerIdStr,
+            });
+        }
+        return res.status(200).json({ message: "Verification reverted to pending", logId });
+    }
+    catch (err) {
+        return res.status(500).json({ message: err.message });
+    }
+});
+exports.unverifyProductionLog = unverifyProductionLog;
 // ─── Get Verifications for a Container (Admin/PDI) ───────────────────────────
 const getVerificationsByContainer = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
@@ -214,21 +261,34 @@ const getVerificationByLog = (req, res) => __awaiter(void 0, void 0, void 0, fun
 exports.getVerificationByLog = getVerificationByLog;
 // ─── PDI Dashboard: Summary of pending/verified logs ────────────────────────
 const getPdiDashboard = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a, _b;
     try {
         const pdiId = req.userId;
         const { page, limit, skip } = getPagination(req.query);
         const pendingCount = yield productionLog_1.default.countDocuments({ status: "pending" });
-        const [verifiedByMe, total] = yield Promise.all([
+        const [verifiedByMe, total, penaltyContainers] = yield Promise.all([
             pdiVerification_1.default.find({ verifiedBy: pdiId })
                 .populate("productionLog", "date reportedQuantity")
-                .populate("container", "model")
+                .populate("container", "model penaltyPerUnit quantity")
                 .sort({ verifiedAt: -1 })
                 .skip(skip)
                 .limit(limit),
             pdiVerification_1.default.countDocuments({ verifiedBy: pdiId }),
+            // Live penalty across all non-cancelled containers
+            container_1.default.find({ status: { $ne: "cancelled" } }).select("quantity penaltyPerUnit"),
         ]);
+        const verifiedMap = yield (0, penalty_1.getVerifiedByContainer)(penaltyContainers.map((c) => c._id));
+        let totalPenalty = 0;
+        let totalPendingVehicles = 0;
+        for (const c of penaltyContainers) {
+            const { pendingQuantity, totalPenalty: p } = (0, penalty_1.computePenalty)(c.quantity, (_a = verifiedMap.get(String(c._id))) !== null && _a !== void 0 ? _a : 0, (_b = c.penaltyPerUnit) !== null && _b !== void 0 ? _b : 0);
+            totalPenalty += p;
+            totalPendingVehicles += pendingQuantity;
+        }
         return res.status(200).json({
             pendingCount,
+            totalPenalty,
+            totalPendingVehicles,
             recentVerifications: verifiedByMe,
             pagination: {
                 page,
