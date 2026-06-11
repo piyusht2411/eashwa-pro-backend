@@ -13,6 +13,7 @@ import containerRoutes from "./routes/container";
 import productionLogRoutes from "./routes/productionLog";
 import pdiVerificationRoutes from "./routes/pdiVerification";
 import paymentRoutes from "./routes/payment";
+import miscellaneousRoutes from "./routes/miscellaneous";
 import adminDashboardRouter from "./routes/adminDashboard";
 import notificationRouter from "./routes/notification";
 
@@ -74,6 +75,7 @@ app.use("/api/containers", containerRoutes);
 app.use("/api/production-logs", productionLogRoutes);
 app.use("/api/pdi", pdiVerificationRoutes);
 app.use("/api/payments", paymentRoutes);
+app.use("/api/miscellaneous", miscellaneousRoutes);
 app.use("/api/admin", adminDashboardRouter);
 app.use("/api/notifications", notificationRouter);
 
@@ -89,6 +91,7 @@ app.get("/", (req: Request, res: Response) => {
       productionLogs: "/api/production-logs",
       pdiVerification: "/api/pdi",
       payments: "/api/payments",
+      miscellaneous: "/api/miscellaneous",
     },
   });
 });

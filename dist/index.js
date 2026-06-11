@@ -50,6 +50,7 @@ const container_1 = __importDefault(require("./routes/container"));
 const productionLog_1 = __importDefault(require("./routes/productionLog"));
 const pdiVerification_1 = __importDefault(require("./routes/pdiVerification"));
 const payment_1 = __importDefault(require("./routes/payment"));
+const miscellaneous_1 = __importDefault(require("./routes/miscellaneous"));
 const adminDashboard_1 = __importDefault(require("./routes/adminDashboard"));
 const notification_1 = __importDefault(require("./routes/notification"));
 dotenv_1.default.config();
@@ -96,6 +97,7 @@ app.use("/api/containers", container_1.default);
 app.use("/api/production-logs", productionLog_1.default);
 app.use("/api/pdi", pdiVerification_1.default);
 app.use("/api/payments", payment_1.default);
+app.use("/api/miscellaneous", miscellaneous_1.default);
 app.use("/api/admin", adminDashboard_1.default);
 app.use("/api/notifications", notification_1.default);
 // ─── Health Check ─────────────────────────────────────────────────────────────
@@ -110,6 +112,7 @@ app.get("/", (req, res) => {
             productionLogs: "/api/production-logs",
             pdiVerification: "/api/pdi",
             payments: "/api/payments",
+            miscellaneous: "/api/miscellaneous",
         },
     });
 });

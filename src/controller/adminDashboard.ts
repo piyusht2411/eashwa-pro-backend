@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import ProductionLog from "../model/productionLog";
 import PdiVerification from "../model/pdiVerification";
 import Payment from "../model/payment";
+import Miscellaneous from "../model/miscellaneous";
 import Container from "../model/container";
 import User from "../model/user";
 import { istify, toIST } from "../utils/date";
@@ -18,7 +19,7 @@ const getPagination = (query: Request["query"]) => {
 // ─── Admin Dashboard Summary ─────────────────────────────────────────────────
 export const getAdminDashboardSummary = async (req: Request, res: Response) => {
   try {
-    const [verifiedAgg, pendingVerify, paymentAgg] = await Promise.all([
+    const [verifiedAgg, pendingVerify, paymentAgg, miscAgg] = await Promise.all([
       PdiVerification.aggregate([
         { $group: { _id: null, total: { $sum: "$verifiedQuantity" } } },
       ]),
@@ -33,12 +34,15 @@ export const getAdminDashboardSummary = async (req: Request, res: Response) => {
           },
         },
       ]),
+      Miscellaneous.aggregate([
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ]),
     ]);
 
     const totalProduction = verifiedAgg[0]?.total ?? 0;
     const totalAmount = paymentAgg[0]?.totalAmount ?? 0;
     const paidAmount = paymentAgg[0]?.paidAmount ?? 0;
-    const remainingAmount = paymentAgg[0]?.remainingAmount ?? 0;
+    const miscellaneousAmount = miscAgg[0]?.total ?? 0;
 
     // Live penalty across all non-cancelled containers
     const penaltyContainers = await Container.find({ status: { $ne: "cancelled" } }).select(
@@ -57,11 +61,16 @@ export const getAdminDashboardSummary = async (req: Request, res: Response) => {
       totalPendingVehicles += pendingQuantity;
     }
 
+    // Both the hold/penalty and miscellaneous deductions reduce what is still owed
+    const remainingAmount =
+      (paymentAgg[0]?.remainingAmount ?? 0) - miscellaneousAmount - totalPenalty;
+
     return res.status(200).json({
       totalProduction,
       pendingVerify,
       totalAmount,
       paidAmount,
+      miscellaneousAmount,
       remainingAmount,
       totalPenalty,
       totalPendingVehicles,

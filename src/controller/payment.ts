@@ -3,6 +3,7 @@ import Payment from "../model/payment";
 import PdiVerification from "../model/pdiVerification";
 import Container from "../model/container";
 import { sendPushNotification } from "../utils/notify";
+import { computePenalty } from "../utils/penalty";
 
 const getPagination = (query: Request["query"]) => {
   const page = Math.max(Number(query.page) || 1, 1);
@@ -132,7 +133,7 @@ export const getAllPayments = async (req: Request, res: Response) => {
 
     const [payments, total] = await Promise.all([
       Payment.find()
-        .populate("container", "model quantity ratePerUnit status date")
+        .populate("container", "model quantity ratePerUnit penaltyPerUnit status date")
         .populate("team", "name email phone")
         .populate("createdBy", "name email")
         .sort({ createdAt: -1 })
@@ -141,8 +142,23 @@ export const getAllPayments = async (req: Request, res: Response) => {
       Payment.countDocuments(),
     ]);
 
+    // Attach the live hold/penalty for each container so the app can net it out
+    const enrichedPayments = payments.map((p) => {
+      const obj: any = p.toObject();
+      const container: any = obj.container ?? {};
+      const { pendingQuantity, penaltyPerUnit, totalPenalty } = computePenalty(
+        container.quantity ?? 0,
+        obj.totalVerifiedQuantity ?? 0,
+        container.penaltyPerUnit ?? 0
+      );
+      obj.pendingQuantity = pendingQuantity;
+      obj.penaltyPerUnit = penaltyPerUnit;
+      obj.totalPenalty = totalPenalty;
+      return obj;
+    });
+
     return res.status(200).json({
-      payments,
+      payments: enrichedPayments,
       pagination: {
         page,
         limit,

@@ -73,3 +73,11 @@ export interface IPaymentEntry {
   paidAt: Date;
   note?: string;
 }
+
+// ─── Miscellaneous (Admin-entered ad-hoc deductions) ─────────────────────────
+export interface IMiscellaneous {
+  _id: Types.ObjectId;
+  amount: number;                   // ad-hoc amount entered by admin
+  note?: string;                    // optional description
+  createdBy: Types.ObjectId;        // ref → User (role: admin)
+}

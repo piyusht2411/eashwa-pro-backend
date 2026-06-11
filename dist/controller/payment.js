@@ -17,6 +17,7 @@ const payment_1 = __importDefault(require("../model/payment"));
 const pdiVerification_1 = __importDefault(require("../model/pdiVerification"));
 const container_1 = __importDefault(require("../model/container"));
 const notify_1 = require("../utils/notify");
+const penalty_1 = require("../utils/penalty");
 const getPagination = (query) => {
     const page = Math.max(Number(query.page) || 1, 1);
     const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
@@ -121,7 +122,7 @@ const getAllPayments = (req, res) => __awaiter(void 0, void 0, void 0, function*
         const { page, limit, skip } = getPagination(req.query);
         const [payments, total] = yield Promise.all([
             payment_1.default.find()
-                .populate("container", "model quantity ratePerUnit status date")
+                .populate("container", "model quantity ratePerUnit penaltyPerUnit status date")
                 .populate("team", "name email phone")
                 .populate("createdBy", "name email")
                 .sort({ createdAt: -1 })
@@ -129,8 +130,19 @@ const getAllPayments = (req, res) => __awaiter(void 0, void 0, void 0, function*
                 .limit(limit),
             payment_1.default.countDocuments(),
         ]);
+        // Attach the live hold/penalty for each container so the app can net it out
+        const enrichedPayments = payments.map((p) => {
+            var _a, _b, _c, _d;
+            const obj = p.toObject();
+            const container = (_a = obj.container) !== null && _a !== void 0 ? _a : {};
+            const { pendingQuantity, penaltyPerUnit, totalPenalty } = (0, penalty_1.computePenalty)((_b = container.quantity) !== null && _b !== void 0 ? _b : 0, (_c = obj.totalVerifiedQuantity) !== null && _c !== void 0 ? _c : 0, (_d = container.penaltyPerUnit) !== null && _d !== void 0 ? _d : 0);
+            obj.pendingQuantity = pendingQuantity;
+            obj.penaltyPerUnit = penaltyPerUnit;
+            obj.totalPenalty = totalPenalty;
+            return obj;
+        });
         return res.status(200).json({
-            payments,
+            payments: enrichedPayments,
             pagination: {
                 page,
                 limit,

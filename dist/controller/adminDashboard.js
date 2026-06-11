@@ -17,6 +17,7 @@ const mongoose_1 = __importDefault(require("mongoose"));
 const productionLog_1 = __importDefault(require("../model/productionLog"));
 const pdiVerification_1 = __importDefault(require("../model/pdiVerification"));
 const payment_1 = __importDefault(require("../model/payment"));
+const miscellaneous_1 = __importDefault(require("../model/miscellaneous"));
 const container_1 = __importDefault(require("../model/container"));
 const user_1 = __importDefault(require("../model/user"));
 const date_1 = require("../utils/date");
@@ -29,9 +30,9 @@ const getPagination = (query) => {
 };
 // ─── Admin Dashboard Summary ─────────────────────────────────────────────────
 const getAdminDashboardSummary = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
     try {
-        const [verifiedAgg, pendingVerify, paymentAgg] = yield Promise.all([
+        const [verifiedAgg, pendingVerify, paymentAgg, miscAgg] = yield Promise.all([
             pdiVerification_1.default.aggregate([
                 { $group: { _id: null, total: { $sum: "$verifiedQuantity" } } },
             ]),
@@ -46,11 +47,14 @@ const getAdminDashboardSummary = (req, res) => __awaiter(void 0, void 0, void 0,
                     },
                 },
             ]),
+            miscellaneous_1.default.aggregate([
+                { $group: { _id: null, total: { $sum: "$amount" } } },
+            ]),
         ]);
         const totalProduction = (_b = (_a = verifiedAgg[0]) === null || _a === void 0 ? void 0 : _a.total) !== null && _b !== void 0 ? _b : 0;
         const totalAmount = (_d = (_c = paymentAgg[0]) === null || _c === void 0 ? void 0 : _c.totalAmount) !== null && _d !== void 0 ? _d : 0;
         const paidAmount = (_f = (_e = paymentAgg[0]) === null || _e === void 0 ? void 0 : _e.paidAmount) !== null && _f !== void 0 ? _f : 0;
-        const remainingAmount = (_h = (_g = paymentAgg[0]) === null || _g === void 0 ? void 0 : _g.remainingAmount) !== null && _h !== void 0 ? _h : 0;
+        const miscellaneousAmount = (_h = (_g = miscAgg[0]) === null || _g === void 0 ? void 0 : _g.total) !== null && _h !== void 0 ? _h : 0;
         // Live penalty across all non-cancelled containers
         const penaltyContainers = yield container_1.default.find({ status: { $ne: "cancelled" } }).select("quantity penaltyPerUnit");
         const verifiedMap = yield (0, penalty_1.getVerifiedByContainer)(penaltyContainers.map((c) => c._id));
@@ -61,11 +65,14 @@ const getAdminDashboardSummary = (req, res) => __awaiter(void 0, void 0, void 0,
             totalPenalty += p;
             totalPendingVehicles += pendingQuantity;
         }
+        // Both the hold/penalty and miscellaneous deductions reduce what is still owed
+        const remainingAmount = ((_m = (_l = paymentAgg[0]) === null || _l === void 0 ? void 0 : _l.remainingAmount) !== null && _m !== void 0 ? _m : 0) - miscellaneousAmount - totalPenalty;
         return res.status(200).json({
             totalProduction,
             pendingVerify,
             totalAmount,
             paidAmount,
+            miscellaneousAmount,
             remainingAmount,
             totalPenalty,
             totalPendingVehicles,
