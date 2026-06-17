@@ -28,7 +28,7 @@ const getPagination = (query) => {
 };
 // ─── PDI: Verify a Production Log ─────────────────────────────────────────────
 const verifyProductionLog = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a, _b, _c;
+    var _a, _b, _c, _d, _e, _f;
     try {
         const { logId } = req.params;
         const { verifiedQuantity, isIncomplete, missingQuantity, remarks } = req.body;
@@ -46,6 +46,20 @@ const verifyProductionLog = (req, res) => __awaiter(void 0, void 0, void 0, func
         if (verifiedQuantity > log.reportedQuantity) {
             return res.status(400).json({
                 message: `verifiedQuantity (${verifiedQuantity}) cannot exceed reportedQuantity (${log.reportedQuantity})`,
+            });
+        }
+        // Cumulative verified for this container cannot exceed the target (quantity).
+        const containerForCap = log.container;
+        const containerQty = Number((_a = containerForCap === null || containerForCap === void 0 ? void 0 : containerForCap.quantity) !== null && _a !== void 0 ? _a : 0);
+        const priorAgg = yield pdiVerification_1.default.aggregate([
+            { $match: { container: containerForCap._id, productionLog: { $ne: log._id } } },
+            { $group: { _id: null, total: { $sum: "$verifiedQuantity" } } },
+        ]);
+        const priorVerified = (_c = (_b = priorAgg[0]) === null || _b === void 0 ? void 0 : _b.total) !== null && _c !== void 0 ? _c : 0;
+        const remainingCapacity = Math.max(0, containerQty - priorVerified);
+        if (verifiedQuantity > remainingCapacity) {
+            return res.status(400).json({
+                message: `Verified quantity exceeds the container target. Target is ${containerQty}, already verified ${priorVerified}, so at most ${remainingCapacity} more can be verified.`,
             });
         }
         const incomplete = isIncomplete !== null && isIncomplete !== void 0 ? isIncomplete : (verifiedQuantity < log.reportedQuantity);
@@ -67,8 +81,8 @@ const verifyProductionLog = (req, res) => __awaiter(void 0, void 0, void 0, func
         yield log.save();
         // ── Notifications ────────────────────────────────────────────────────────
         const containerDoc = log.container; // already populated
-        const containerModel = (_a = containerDoc === null || containerDoc === void 0 ? void 0 : containerDoc.model) !== null && _a !== void 0 ? _a : "container";
-        const containerIdStr = (_c = (_b = containerDoc === null || containerDoc === void 0 ? void 0 : containerDoc._id) === null || _b === void 0 ? void 0 : _b.toString()) !== null && _c !== void 0 ? _c : "";
+        const containerModel = (_d = containerDoc === null || containerDoc === void 0 ? void 0 : containerDoc.model) !== null && _d !== void 0 ? _d : "container";
+        const containerIdStr = (_f = (_e = containerDoc === null || containerDoc === void 0 ? void 0 : containerDoc._id) === null || _e === void 0 ? void 0 : _e.toString()) !== null && _f !== void 0 ? _f : "";
         // 1. Notify the Team whose log was verified
         yield (0, notify_1.sendPushNotification)(log.team, incomplete ? "⚠️ Production Partially Verified" : "✅ Production Verified", incomplete
             ? `Your report for ${containerModel} was partially accepted. ${missing} units are unverified.`
@@ -98,7 +112,7 @@ const verifyProductionLog = (req, res) => __awaiter(void 0, void 0, void 0, func
 exports.verifyProductionLog = verifyProductionLog;
 // ─── PDI: Edit an incomplete verification ─────────────────────────────────────
 const editIncompleteVerification = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a, _b, _c;
+    var _a, _b, _c, _d, _e, _f;
     try {
         const { verificationId } = req.params;
         const { verifiedQuantity, remarks } = req.body;
@@ -123,6 +137,20 @@ const editIncompleteVerification = (req, res) => __awaiter(void 0, void 0, void 
                 message: `verifiedQuantity (${verifiedQuantity}) cannot exceed reportedQuantity (${log.reportedQuantity})`,
             });
         }
+        // Cumulative verified for this container cannot exceed the target (quantity).
+        const containerForCap = log.container;
+        const containerQty = Number((_a = containerForCap === null || containerForCap === void 0 ? void 0 : containerForCap.quantity) !== null && _a !== void 0 ? _a : 0);
+        const priorAgg = yield pdiVerification_1.default.aggregate([
+            { $match: { container: containerForCap._id, productionLog: { $ne: log._id } } },
+            { $group: { _id: null, total: { $sum: "$verifiedQuantity" } } },
+        ]);
+        const priorVerified = (_c = (_b = priorAgg[0]) === null || _b === void 0 ? void 0 : _b.total) !== null && _c !== void 0 ? _c : 0;
+        const remainingCapacity = Math.max(0, containerQty - priorVerified);
+        if (verifiedQuantity > remainingCapacity) {
+            return res.status(400).json({
+                message: `Verified quantity exceeds the container target. Target is ${containerQty}, already verified ${priorVerified}, so at most ${remainingCapacity} more can be verified.`,
+            });
+        }
         const incomplete = verifiedQuantity < log.reportedQuantity;
         const missing = log.reportedQuantity - verifiedQuantity;
         verification.verifiedQuantity = verifiedQuantity;
@@ -138,8 +166,8 @@ const editIncompleteVerification = (req, res) => __awaiter(void 0, void 0, void 
         yield log.save();
         // ── Notifications ────────────────────────────────────────────────────────
         const containerDoc = log.container;
-        const containerModel = (_a = containerDoc === null || containerDoc === void 0 ? void 0 : containerDoc.model) !== null && _a !== void 0 ? _a : "container";
-        const containerIdStr = (_c = (_b = containerDoc === null || containerDoc === void 0 ? void 0 : containerDoc._id) === null || _b === void 0 ? void 0 : _b.toString()) !== null && _c !== void 0 ? _c : "";
+        const containerModel = (_d = containerDoc === null || containerDoc === void 0 ? void 0 : containerDoc.model) !== null && _d !== void 0 ? _d : "container";
+        const containerIdStr = (_f = (_e = containerDoc === null || containerDoc === void 0 ? void 0 : containerDoc._id) === null || _e === void 0 ? void 0 : _e.toString()) !== null && _f !== void 0 ? _f : "";
         const logIdStr = log._id.toString();
         yield (0, notify_1.sendPushNotification)(log.team, incomplete ? "⚠️ Verification Updated (Partial)" : "✅ Verification Updated", incomplete
             ? `Your report for ${containerModel} is still partial. ${missing} units unverified.`
@@ -212,6 +240,7 @@ const unverifyProductionLog = (req, res) => __awaiter(void 0, void 0, void 0, fu
 exports.unverifyProductionLog = unverifyProductionLog;
 // ─── Get Verifications for a Container (Admin/PDI) ───────────────────────────
 const getVerificationsByContainer = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a;
     try {
         const { containerId } = req.params;
         const { page, limit, skip } = getPagination(req.query);
@@ -225,7 +254,12 @@ const getVerificationsByContainer = (req, res) => __awaiter(void 0, void 0, void
             pdiVerification_1.default.countDocuments({ container: containerId }),
             pdiVerification_1.default.find({ container: containerId }).select("verifiedQuantity"),
         ]);
-        const totalVerified = summaryVerifications.reduce((s, v) => s + v.verifiedQuantity, 0);
+        const rawTotalVerified = summaryVerifications.reduce((s, v) => s + v.verifiedQuantity, 0);
+        // Cap at the container target — verified can never exceed it.
+        const containerForCap = yield container_1.default.findById(containerId).select("quantity");
+        const totalVerified = containerForCap
+            ? Math.min((_a = containerForCap.quantity) !== null && _a !== void 0 ? _a : 0, rawTotalVerified)
+            : rawTotalVerified;
         return res.status(200).json({
             verifications,
             totalVerified,

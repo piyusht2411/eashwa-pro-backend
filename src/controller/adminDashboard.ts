@@ -127,17 +127,19 @@ export const getAdminReport = async (req: Request, res: Response) => {
       { $unwind: { path: "$team", preserveNullAndEmptyArrays: true } },
     ];
 
+    // Group per container so verified can be capped at each container's target
+    // (a container's verified units can never exceed its quantity/target).
     const summaryPipeline = [
       ...basePipeline,
       {
         $group: {
-          _id: null,
-          totalReported: { $sum: "$reportedQuantity" },
-          totalVerified: { $sum: { $ifNull: ["$pdi.verifiedQuantity", 0] } },
-          totalIncomplete: {
+          _id: "$container._id",
+          target: { $first: "$container.quantity" },
+          reported: { $sum: "$reportedQuantity" },
+          verified: { $sum: { $ifNull: ["$pdi.verifiedQuantity", 0] } },
+          incomplete: {
             $sum: { $cond: [{ $eq: ["$status", "incomplete"] }, 1, 0] },
           },
-          containerIds: { $addToSet: "$container._id" },
         },
       },
     ];
@@ -174,7 +176,18 @@ export const getAdminReport = async (req: Request, res: Response) => {
       ProductionLog.aggregate(countPipeline),
     ]);
 
-    const summaryRow = summaryRes[0];
+    // Roll up the per-container groups, capping verified at each target.
+    const summaryRow = summaryRes.reduce(
+      (acc: any, row: any) => {
+        const target = row.target ?? 0;
+        acc.totalReported += row.reported ?? 0;
+        acc.totalVerified += Math.min(target, row.verified ?? 0);
+        acc.totalIncomplete += row.incomplete ?? 0;
+        if (row._id) acc.containerIds.push(row._id);
+        return acc;
+      },
+      { totalReported: 0, totalVerified: 0, totalIncomplete: 0, containerIds: [] as any[] }
+    );
     let totalAmount = 0;
     let totalPaid = 0;
     let totalRemaining = 0;

@@ -25,9 +25,11 @@ const getPagination = (query) => {
     return { page, limit, skip };
 };
 // ─── Helper: recalculate totals from PDI verified data ───────────────────────
-const recalcPaymentTotals = (containerId, ratePerUnit) => __awaiter(void 0, void 0, void 0, function* () {
+const recalcPaymentTotals = (containerId, ratePerUnit, targetQuantity) => __awaiter(void 0, void 0, void 0, function* () {
     const verifications = yield pdiVerification_1.default.find({ container: containerId });
-    const totalVerifiedQty = verifications.reduce((s, v) => s + v.verifiedQuantity, 0);
+    const rawVerifiedQty = verifications.reduce((s, v) => s + v.verifiedQuantity, 0);
+    // Verified (and therefore payable) units can never exceed the container target.
+    const totalVerifiedQty = Math.min(targetQuantity !== null && targetQuantity !== void 0 ? targetQuantity : 0, rawVerifiedQty);
     const totalAmount = totalVerifiedQty * ratePerUnit;
     return { totalVerifiedQty, totalAmount };
 });
@@ -39,7 +41,7 @@ const getOrInitPayment = (req, res) => __awaiter(void 0, void 0, void 0, functio
         const container = yield container_1.default.findById(containerId).populate("assignedTeam", "name email");
         if (!container)
             return res.status(404).json({ message: "Container not found" });
-        const { totalVerifiedQty, totalAmount } = yield recalcPaymentTotals(containerId, container.ratePerUnit);
+        const { totalVerifiedQty, totalAmount } = yield recalcPaymentTotals(containerId, container.ratePerUnit, container.quantity);
         let payment = yield payment_1.default.findOne({ container: containerId });
         if (!payment) {
             payment = yield payment_1.default.create({
@@ -80,7 +82,7 @@ const makePayment = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
         const container = yield container_1.default.findById(containerId);
         if (!container)
             return res.status(404).json({ message: "Container not found" });
-        const { totalVerifiedQty, totalAmount } = yield recalcPaymentTotals(containerId, container.ratePerUnit);
+        const { totalVerifiedQty, totalAmount } = yield recalcPaymentTotals(containerId, container.ratePerUnit, container.quantity);
         let payment = yield payment_1.default.findOne({ container: containerId });
         if (!payment) {
             payment = yield payment_1.default.create({

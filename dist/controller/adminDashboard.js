@@ -130,17 +130,19 @@ const getAdminReport = (req, res) => __awaiter(void 0, void 0, void 0, function*
             },
             { $unwind: { path: "$team", preserveNullAndEmptyArrays: true } },
         ];
+        // Group per container so verified can be capped at each container's target
+        // (a container's verified units can never exceed its quantity/target).
         const summaryPipeline = [
             ...basePipeline,
             {
                 $group: {
-                    _id: null,
-                    totalReported: { $sum: "$reportedQuantity" },
-                    totalVerified: { $sum: { $ifNull: ["$pdi.verifiedQuantity", 0] } },
-                    totalIncomplete: {
+                    _id: "$container._id",
+                    target: { $first: "$container.quantity" },
+                    reported: { $sum: "$reportedQuantity" },
+                    verified: { $sum: { $ifNull: ["$pdi.verifiedQuantity", 0] } },
+                    incomplete: {
                         $sum: { $cond: [{ $eq: ["$status", "incomplete"] }, 1, 0] },
                     },
-                    containerIds: { $addToSet: "$container._id" },
                 },
             },
         ];
@@ -173,7 +175,17 @@ const getAdminReport = (req, res) => __awaiter(void 0, void 0, void 0, function*
             productionLog_1.default.aggregate(logsPipeline),
             productionLog_1.default.aggregate(countPipeline),
         ]);
-        const summaryRow = summaryRes[0];
+        // Roll up the per-container groups, capping verified at each target.
+        const summaryRow = summaryRes.reduce((acc, row) => {
+            var _a, _b, _c, _d;
+            const target = (_a = row.target) !== null && _a !== void 0 ? _a : 0;
+            acc.totalReported += (_b = row.reported) !== null && _b !== void 0 ? _b : 0;
+            acc.totalVerified += Math.min(target, (_c = row.verified) !== null && _c !== void 0 ? _c : 0);
+            acc.totalIncomplete += (_d = row.incomplete) !== null && _d !== void 0 ? _d : 0;
+            if (row._id)
+                acc.containerIds.push(row._id);
+            return acc;
+        }, { totalReported: 0, totalVerified: 0, totalIncomplete: 0, containerIds: [] });
         let totalAmount = 0;
         let totalPaid = 0;
         let totalRemaining = 0;

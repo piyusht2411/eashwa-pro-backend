@@ -16,9 +16,13 @@ exports.getVerifiedByContainer = exports.computePenalty = void 0;
 const pdiVerification_1 = __importDefault(require("../model/pdiVerification"));
 const computePenalty = (quantity, verifiedQuantity, penaltyPerUnit) => {
     const safeRate = penaltyPerUnit !== null && penaltyPerUnit !== void 0 ? penaltyPerUnit : 0;
-    const pendingQuantity = Math.max(0, (quantity !== null && quantity !== void 0 ? quantity : 0) - (verifiedQuantity !== null && verifiedQuantity !== void 0 ? verifiedQuantity : 0));
+    const target = quantity !== null && quantity !== void 0 ? quantity : 0;
+    // Verified can never exceed the target. Cap it so any legacy/over-verified
+    // record still displays correctly (verified ≤ target) on every endpoint.
+    const cappedVerified = Math.min(target, verifiedQuantity !== null && verifiedQuantity !== void 0 ? verifiedQuantity : 0);
+    const pendingQuantity = Math.max(0, target - cappedVerified);
     return {
-        verifiedQuantity: verifiedQuantity !== null && verifiedQuantity !== void 0 ? verifiedQuantity : 0,
+        verifiedQuantity: cappedVerified,
         pendingQuantity,
         penaltyPerUnit: safeRate,
         totalPenalty: pendingQuantity * safeRate,

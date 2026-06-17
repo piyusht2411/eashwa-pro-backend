@@ -20,9 +20,13 @@ export const computePenalty = (
   penaltyPerUnit: number
 ): ContainerPenalty => {
   const safeRate = penaltyPerUnit ?? 0;
-  const pendingQuantity = Math.max(0, (quantity ?? 0) - (verifiedQuantity ?? 0));
+  const target = quantity ?? 0;
+  // Verified can never exceed the target. Cap it so any legacy/over-verified
+  // record still displays correctly (verified ≤ target) on every endpoint.
+  const cappedVerified = Math.min(target, verifiedQuantity ?? 0);
+  const pendingQuantity = Math.max(0, target - cappedVerified);
   return {
-    verifiedQuantity: verifiedQuantity ?? 0,
+    verifiedQuantity: cappedVerified,
     pendingQuantity,
     penaltyPerUnit: safeRate,
     totalPenalty: pendingQuantity * safeRate,

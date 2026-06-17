@@ -13,9 +13,15 @@ const getPagination = (query: Request["query"]) => {
 };
 
 // ─── Helper: recalculate totals from PDI verified data ───────────────────────
-const recalcPaymentTotals = async (containerId: string, ratePerUnit: number) => {
+const recalcPaymentTotals = async (
+  containerId: string,
+  ratePerUnit: number,
+  targetQuantity: number
+) => {
   const verifications = await PdiVerification.find({ container: containerId });
-  const totalVerifiedQty = verifications.reduce((s, v) => s + v.verifiedQuantity, 0);
+  const rawVerifiedQty = verifications.reduce((s, v) => s + v.verifiedQuantity, 0);
+  // Verified (and therefore payable) units can never exceed the container target.
+  const totalVerifiedQty = Math.min(targetQuantity ?? 0, rawVerifiedQty);
   const totalAmount = totalVerifiedQty * ratePerUnit;
   return { totalVerifiedQty, totalAmount };
 };
@@ -31,7 +37,8 @@ export const getOrInitPayment = async (req: Request, res: Response) => {
 
     const { totalVerifiedQty, totalAmount } = await recalcPaymentTotals(
       containerId,
-      container.ratePerUnit
+      container.ratePerUnit,
+      container.quantity
     );
 
     let payment = await Payment.findOne({ container: containerId });
@@ -79,7 +86,8 @@ export const makePayment = async (req: Request, res: Response) => {
 
     const { totalVerifiedQty, totalAmount } = await recalcPaymentTotals(
       containerId,
-      container.ratePerUnit
+      container.ratePerUnit,
+      container.quantity
     );
 
     let payment = await Payment.findOne({ container: containerId });

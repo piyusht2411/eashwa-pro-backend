@@ -39,6 +39,21 @@ export const verifyProductionLog = async (req: Request, res: Response) => {
       });
     }
 
+    // Cumulative verified for this container cannot exceed the target (quantity).
+    const containerForCap = log.container as any;
+    const containerQty = Number(containerForCap?.quantity ?? 0);
+    const priorAgg = await PdiVerification.aggregate([
+      { $match: { container: containerForCap._id, productionLog: { $ne: log._id } } },
+      { $group: { _id: null, total: { $sum: "$verifiedQuantity" } } },
+    ]);
+    const priorVerified = priorAgg[0]?.total ?? 0;
+    const remainingCapacity = Math.max(0, containerQty - priorVerified);
+    if (verifiedQuantity > remainingCapacity) {
+      return res.status(400).json({
+        message: `Verified quantity exceeds the container target. Target is ${containerQty}, already verified ${priorVerified}, so at most ${remainingCapacity} more can be verified.`,
+      });
+    }
+
     const incomplete = isIncomplete ?? (verifiedQuantity < log.reportedQuantity);
     const missing = missingQuantity ?? (log.reportedQuantity - verifiedQuantity);
 
@@ -133,6 +148,21 @@ export const editIncompleteVerification = async (req: Request, res: Response) =>
     if (verifiedQuantity > log.reportedQuantity) {
       return res.status(400).json({
         message: `verifiedQuantity (${verifiedQuantity}) cannot exceed reportedQuantity (${log.reportedQuantity})`,
+      });
+    }
+
+    // Cumulative verified for this container cannot exceed the target (quantity).
+    const containerForCap = log.container as any;
+    const containerQty = Number(containerForCap?.quantity ?? 0);
+    const priorAgg = await PdiVerification.aggregate([
+      { $match: { container: containerForCap._id, productionLog: { $ne: log._id } } },
+      { $group: { _id: null, total: { $sum: "$verifiedQuantity" } } },
+    ]);
+    const priorVerified = priorAgg[0]?.total ?? 0;
+    const remainingCapacity = Math.max(0, containerQty - priorVerified);
+    if (verifiedQuantity > remainingCapacity) {
+      return res.status(400).json({
+        message: `Verified quantity exceeds the container target. Target is ${containerQty}, already verified ${priorVerified}, so at most ${remainingCapacity} more can be verified.`,
       });
     }
 
@@ -269,7 +299,12 @@ export const getVerificationsByContainer = async (req: Request, res: Response) =
       PdiVerification.find({ container: containerId }).select("verifiedQuantity"),
     ]);
 
-    const totalVerified = summaryVerifications.reduce((s, v) => s + v.verifiedQuantity, 0);
+    const rawTotalVerified = summaryVerifications.reduce((s, v) => s + v.verifiedQuantity, 0);
+    // Cap at the container target — verified can never exceed it.
+    const containerForCap = await Container.findById(containerId).select("quantity");
+    const totalVerified = containerForCap
+      ? Math.min(containerForCap.quantity ?? 0, rawTotalVerified)
+      : rawTotalVerified;
 
     return res.status(200).json({
       verifications,
