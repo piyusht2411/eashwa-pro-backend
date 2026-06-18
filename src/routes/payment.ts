@@ -5,6 +5,8 @@ import {
   getAllPayments,
   getMyPayments,
   getPaymentByContainer,
+  updatePaymentEntry,
+  deletePaymentEntry,
 } from "../controller/payment";
 import { authenticateToken, requireRole } from "../middleware/authMiddleware";
 
@@ -26,5 +28,11 @@ router.get("/container/:containerId/summary", requireRole("admin", "team"), getP
 
 // Admin: make a payment for a container
 router.post("/container/:containerId/pay", requireRole("admin"), makePayment);
+
+// Admin: edit a recorded payment transaction (by its index in the ledger)
+router.patch("/container/:containerId/pay/:index", requireRole("admin"), updatePaymentEntry);
+
+// Admin: delete a recorded payment transaction (by its index in the ledger)
+router.delete("/container/:containerId/pay/:index", requireRole("admin"), deletePaymentEntry);
 
 export default router;

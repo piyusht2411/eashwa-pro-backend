@@ -121,8 +121,8 @@ export const verifyProductionLog = async (req: Request, res: Response) => {
   }
 };
 
-// ─── PDI: Edit an incomplete verification ─────────────────────────────────────
-export const editIncompleteVerification = async (req: Request, res: Response) => {
+// ─── PDI: Edit a verification ─────────────────────────────────────────────────
+export const editVerification = async (req: Request, res: Response) => {
   try {
     const { verificationId } = req.params;
     const { verifiedQuantity, remarks } = req.body;
@@ -136,10 +136,9 @@ export const editIncompleteVerification = async (req: Request, res: Response) =>
     if (!verification) {
       return res.status(404).json({ message: "Verification not found" });
     }
-    if (!verification.isIncomplete) {
-      return res.status(409).json({
-        message: "Only incomplete verifications can be edited",
-      });
+    // Creator-only: a PDI user may edit only verifications they made
+    if (verification.verifiedBy.toString() !== pdiId) {
+      return res.status(403).json({ message: "You can only edit your own verifications" });
     }
 
     const log = await ProductionLog.findById(verification.productionLog).populate("container");
@@ -238,6 +237,10 @@ export const unverifyProductionLog = async (req: Request, res: Response) => {
     }
 
     if (verification) {
+      // Creator-only: a PDI user may revert only verifications they made
+      if (verification.verifiedBy.toString() !== req.userId) {
+        return res.status(403).json({ message: "You can only revert your own verifications" });
+      }
       await PdiVerification.deleteOne({ _id: verification._id });
     }
 

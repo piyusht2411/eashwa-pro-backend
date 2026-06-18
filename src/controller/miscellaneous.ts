@@ -74,6 +74,45 @@ export const getAllMiscellaneous = async (req: Request, res: Response) => {
   }
 };
 
+// ─── Admin: Update a Miscellaneous Entry ──────────────────────────────────────
+export const updateMiscellaneous = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { amount, note } = req.body;
+
+    const update: any = {};
+    if (amount !== undefined) {
+      if (Number(amount) <= 0 || Number.isNaN(Number(amount))) {
+        return res.status(400).json({ message: "amount must be a positive number" });
+      }
+      update.amount = Number(amount);
+    }
+    if (note !== undefined) update.note = note;
+
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({ message: "No valid fields to update" });
+    }
+
+    const entry = await Miscellaneous.findByIdAndUpdate(id, update, { new: true }).populate(
+      "createdBy",
+      "name email"
+    );
+    if (!entry) {
+      return res.status(404).json({ message: "Miscellaneous entry not found" });
+    }
+
+    const totalMiscellaneous = await getMiscellaneousTotal();
+
+    return res.status(200).json({
+      message: "Miscellaneous entry updated",
+      entry,
+      totalMiscellaneous,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ message: err.message });
+  }
+};
+
 // ─── Admin: Delete a Miscellaneous Entry ──────────────────────────────────────
 export const deleteMiscellaneous = async (req: Request, res: Response) => {
   try {

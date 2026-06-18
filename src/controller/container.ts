@@ -1,6 +1,9 @@
 import { Request, Response } from "express";
 import Container from "../model/container";
 import User from "../model/user";
+import ProductionLog from "../model/productionLog";
+import PdiVerification from "../model/pdiVerification";
+import Payment from "../model/payment";
 import { sendPushNotification } from "../utils/notify";
 import { computePenalty, getVerifiedByContainer } from "../utils/penalty";
 
@@ -223,6 +226,14 @@ export const deleteContainer = async (req: Request, res: Response) => {
     const { id } = req.params;
     const container = await Container.findByIdAndDelete(id);
     if (!container) return res.status(404).json({ message: "Container not found" });
+
+    // Cascade: remove dependent records so nothing is left orphaned.
+    await Promise.all([
+      ProductionLog.deleteMany({ container: id }),
+      PdiVerification.deleteMany({ container: id }),
+      Payment.deleteOne({ container: id }),
+    ]);
+
     return res.status(200).json({ message: "Container deleted" });
   } catch (err: any) {
     return res.status(500).json({ message: err.message });

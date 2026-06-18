@@ -308,6 +308,104 @@ export const getTeamHistory = async (req: Request, res: Response) => {
   }
 };
 
+// ─── Team: Edit own Production Log ───────────────────────────────────────────
+export const updateProductionLog = async (req: Request, res: Response) => {
+  try {
+    const { logId } = req.params;
+    const { reportedQuantity, date } = req.body;
+    const teamId = req.userId;
+
+    const log = await ProductionLog.findById(logId);
+    if (!log) return res.status(404).json({ message: "Production log not found" });
+
+    // Creator-only: a team may edit only its own logs
+    if (log.team.toString() !== teamId) {
+      return res.status(403).json({ message: "You can only edit your own production logs" });
+    }
+
+    if (reportedQuantity !== undefined) {
+      if (Number(reportedQuantity) < 0 || Number.isNaN(Number(reportedQuantity))) {
+        return res.status(400).json({ message: "reportedQuantity must be a non-negative number" });
+      }
+      log.reportedQuantity = Number(reportedQuantity);
+    }
+    if (date !== undefined) {
+      const logDate = new Date(date);
+      logDate.setUTCHours(0, 0, 0, 0);
+      log.date = logDate;
+    }
+
+    // Auto-recalc downstream: keep the linked PDI verification consistent.
+    const verification = await PdiVerification.findOne({ productionLog: log._id });
+    if (verification) {
+      // Verified can never exceed the (possibly reduced) reported quantity.
+      if (verification.verifiedQuantity > log.reportedQuantity) {
+        verification.verifiedQuantity = log.reportedQuantity;
+      }
+      const incomplete = verification.verifiedQuantity < log.reportedQuantity;
+      verification.isIncomplete = incomplete;
+      verification.missingQuantity = log.reportedQuantity - verification.verifiedQuantity;
+      await verification.save();
+      log.verifiedQuantity = verification.verifiedQuantity;
+      log.status = incomplete ? "incomplete" : "verified";
+    }
+
+    await log.save();
+
+    // Notify PDI so they can re-check the edited report
+    const pdiUsers = await User.find({ role: "pdi" }).select("_id");
+    await sendPushNotificationToMany(
+      pdiUsers.map((u) => u._id),
+      "Production Log Edited",
+      `A production report was edited to ${log.reportedQuantity} units.`,
+      { logId: log._id.toString(), containerId: log.container.toString(), type: "production_log_edited" }
+    );
+
+    return res.status(200).json({ message: "Production log updated", log });
+  } catch (err: any) {
+    if (err.code === 11000) {
+      return res.status(409).json({ message: "A log for this date already exists for this container" });
+    }
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── Team: Delete own Production Log ──────────────────────────────────────────
+export const deleteProductionLog = async (req: Request, res: Response) => {
+  try {
+    const { logId } = req.params;
+    const teamId = req.userId;
+
+    const log = await ProductionLog.findById(logId);
+    if (!log) return res.status(404).json({ message: "Production log not found" });
+
+    // Creator-only: a team may delete only its own logs
+    if (log.team.toString() !== teamId) {
+      return res.status(403).json({ message: "You can only delete your own production logs" });
+    }
+
+    const containerId = log.container.toString();
+
+    // Cascade: remove any PDI verification tied to this log.
+    // Payment totals recompute live from PDI data on the next read.
+    await PdiVerification.deleteOne({ productionLog: log._id });
+    await ProductionLog.deleteOne({ _id: log._id });
+
+    // Notify PDI + admins about the removal
+    const recipients = await User.find({ role: { $in: ["pdi", "admin"] } }).select("_id");
+    await sendPushNotificationToMany(
+      recipients.map((u) => u._id),
+      "Production Log Deleted",
+      `A production report was deleted by the team.`,
+      { containerId, type: "production_log_deleted" }
+    );
+
+    return res.status(200).json({ message: "Production log deleted", logId });
+  } catch (err: any) {
+    return res.status(500).json({ message: err.message });
+  }
+};
+
 // ─── Get Single Production Log by ID (Admin / PDI / Team) ────────────────────
 export const getLogById = async (req: Request, res: Response) => {
   try {

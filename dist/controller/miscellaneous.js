@@ -12,7 +12,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.deleteMiscellaneous = exports.getAllMiscellaneous = exports.addMiscellaneous = void 0;
+exports.deleteMiscellaneous = exports.updateMiscellaneous = exports.getAllMiscellaneous = exports.addMiscellaneous = void 0;
 const miscellaneous_1 = __importDefault(require("../model/miscellaneous"));
 const getPagination = (query) => {
     const page = Math.max(Number(query.page) || 1, 1);
@@ -82,6 +82,39 @@ const getAllMiscellaneous = (req, res) => __awaiter(void 0, void 0, void 0, func
     }
 });
 exports.getAllMiscellaneous = getAllMiscellaneous;
+// ─── Admin: Update a Miscellaneous Entry ──────────────────────────────────────
+const updateMiscellaneous = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { id } = req.params;
+        const { amount, note } = req.body;
+        const update = {};
+        if (amount !== undefined) {
+            if (Number(amount) <= 0 || Number.isNaN(Number(amount))) {
+                return res.status(400).json({ message: "amount must be a positive number" });
+            }
+            update.amount = Number(amount);
+        }
+        if (note !== undefined)
+            update.note = note;
+        if (Object.keys(update).length === 0) {
+            return res.status(400).json({ message: "No valid fields to update" });
+        }
+        const entry = yield miscellaneous_1.default.findByIdAndUpdate(id, update, { new: true }).populate("createdBy", "name email");
+        if (!entry) {
+            return res.status(404).json({ message: "Miscellaneous entry not found" });
+        }
+        const totalMiscellaneous = yield getMiscellaneousTotal();
+        return res.status(200).json({
+            message: "Miscellaneous entry updated",
+            entry,
+            totalMiscellaneous,
+        });
+    }
+    catch (err) {
+        return res.status(500).json({ message: err.message });
+    }
+});
+exports.updateMiscellaneous = updateMiscellaneous;
 // ─── Admin: Delete a Miscellaneous Entry ──────────────────────────────────────
 const deleteMiscellaneous = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {

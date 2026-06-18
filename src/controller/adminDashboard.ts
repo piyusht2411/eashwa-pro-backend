@@ -19,42 +19,38 @@ const getPagination = (query: Request["query"]) => {
 // ─── Admin Dashboard Summary ─────────────────────────────────────────────────
 export const getAdminDashboardSummary = async (req: Request, res: Response) => {
   try {
-    const [verifiedAgg, pendingVerify, paymentAgg, miscAgg] = await Promise.all([
-      PdiVerification.aggregate([
-        { $group: { _id: null, total: { $sum: "$verifiedQuantity" } } },
-      ]),
+    const [pendingVerify, paymentAgg, miscAgg] = await Promise.all([
       ProductionLog.countDocuments({ status: "pending" }),
+      // Only paidAmount is read from the ledger — it is real money disbursed.
       Payment.aggregate([
-        {
-          $group: {
-            _id: null,
-            totalAmount: { $sum: "$totalAmount" },
-            paidAmount: { $sum: "$paidAmount" },
-            remainingAmount: { $sum: "$remainingAmount" },
-          },
-        },
+        { $group: { _id: null, paidAmount: { $sum: "$paidAmount" } } },
       ]),
       Miscellaneous.aggregate([
         { $group: { _id: null, total: { $sum: "$amount" } } },
       ]),
     ]);
 
-    const totalProduction = verifiedAgg[0]?.total ?? 0;
-    const totalAmount = paymentAgg[0]?.totalAmount ?? 0;
     const paidAmount = paymentAgg[0]?.paidAmount ?? 0;
     const miscellaneousAmount = miscAgg[0]?.total ?? 0;
 
-    // Live penalty across all non-cancelled containers
+    // Derive production + earned amount from live PDI data, capped at each
+    // container target, so neither verified nor money can exceed the target.
     const penaltyContainers = await Container.find({ status: { $ne: "cancelled" } }).select(
-      "quantity penaltyPerUnit"
+      "quantity penaltyPerUnit ratePerUnit"
     );
     const verifiedMap = await getVerifiedByContainer(penaltyContainers.map((c) => c._id));
     let totalPenalty = 0;
     let totalPendingVehicles = 0;
+    let totalProduction = 0;
+    let totalAmount = 0;
     for (const c of penaltyContainers) {
+      const rawVerified = verifiedMap.get(String(c._id)) ?? 0;
+      const cappedVerified = Math.min(c.quantity ?? 0, rawVerified);
+      totalProduction += cappedVerified;
+      totalAmount += cappedVerified * (c.ratePerUnit ?? 0);
       const { pendingQuantity, totalPenalty: p } = computePenalty(
         c.quantity,
-        verifiedMap.get(String(c._id)) ?? 0,
+        rawVerified,
         c.penaltyPerUnit ?? 0
       );
       totalPenalty += p;
@@ -62,8 +58,7 @@ export const getAdminDashboardSummary = async (req: Request, res: Response) => {
     }
 
     // Both the hold/penalty and miscellaneous deductions reduce what is still owed
-    const remainingAmount =
-      (paymentAgg[0]?.remainingAmount ?? 0) - miscellaneousAmount - totalPenalty;
+    const remainingAmount = totalAmount - paidAmount - miscellaneousAmount - totalPenalty;
 
     return res.status(200).json({
       totalProduction,
@@ -135,6 +130,7 @@ export const getAdminReport = async (req: Request, res: Response) => {
         $group: {
           _id: "$container._id",
           target: { $first: "$container.quantity" },
+          rate: { $first: "$container.ratePerUnit" },
           reported: { $sum: "$reportedQuantity" },
           verified: { $sum: { $ifNull: ["$pdi.verifiedQuantity", 0] } },
           incomplete: {
@@ -177,37 +173,33 @@ export const getAdminReport = async (req: Request, res: Response) => {
     ]);
 
     // Roll up the per-container groups, capping verified at each target.
+    // totalAmount is derived from capped verified × rate (never over-target),
+    // not from the stored Payment.totalAmount which can be stale/over-counted.
     const summaryRow = summaryRes.reduce(
       (acc: any, row: any) => {
         const target = row.target ?? 0;
+        const cappedVerified = Math.min(target, row.verified ?? 0);
         acc.totalReported += row.reported ?? 0;
-        acc.totalVerified += Math.min(target, row.verified ?? 0);
+        acc.totalVerified += cappedVerified;
+        acc.totalAmount += cappedVerified * (row.rate ?? 0);
         acc.totalIncomplete += row.incomplete ?? 0;
         if (row._id) acc.containerIds.push(row._id);
         return acc;
       },
-      { totalReported: 0, totalVerified: 0, totalIncomplete: 0, containerIds: [] as any[] }
+      { totalReported: 0, totalVerified: 0, totalAmount: 0, totalIncomplete: 0, containerIds: [] as any[] }
     );
-    let totalAmount = 0;
+    let totalAmount = summaryRow.totalAmount;
     let totalPaid = 0;
     let totalRemaining = 0;
 
     if (summaryRow?.containerIds?.length) {
+      // Paid is real money already disbursed — read it from the ledger.
       const paymentAgg = await Payment.aggregate([
         { $match: { container: { $in: summaryRow.containerIds } } },
-        {
-          $group: {
-            _id: null,
-            totalAmount: { $sum: "$totalAmount" },
-            totalPaid: { $sum: "$paidAmount" },
-            totalRemaining: { $sum: "$remainingAmount" },
-          },
-        },
+        { $group: { _id: null, totalPaid: { $sum: "$paidAmount" } } },
       ]);
-      totalAmount = paymentAgg[0]?.totalAmount ?? 0;
-      totalPaid = paymentAgg[0]?.paidAmount ?? paymentAgg[0]?.totalPaid ?? 0;
-      totalRemaining =
-        paymentAgg[0]?.totalRemaining ?? paymentAgg[0]?.remainingAmount ?? 0;
+      totalPaid = paymentAgg[0]?.totalPaid ?? 0;
+      totalRemaining = totalAmount - totalPaid;
     }
 
     const total = countRes[0]?.total ?? 0;

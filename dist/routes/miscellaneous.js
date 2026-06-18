@@ -9,6 +9,8 @@ router.use(authMiddleware_1.authenticateToken);
 router.get("/", (0, authMiddleware_1.requireRole)("admin"), miscellaneous_1.getAllMiscellaneous);
 // Admin: add a miscellaneous amount
 router.post("/", (0, authMiddleware_1.requireRole)("admin"), miscellaneous_1.addMiscellaneous);
+// Admin: update a miscellaneous entry
+router.patch("/:id", (0, authMiddleware_1.requireRole)("admin"), miscellaneous_1.updateMiscellaneous);
 // Admin: delete a miscellaneous entry
 router.delete("/:id", (0, authMiddleware_1.requireRole)("admin"), miscellaneous_1.deleteMiscellaneous);
 exports.default = router;

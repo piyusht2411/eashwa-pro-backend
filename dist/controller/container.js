@@ -15,6 +15,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.deleteContainer = exports.updateContainer = exports.updateContainerStatus = exports.getContainerById = exports.getAllContainers = exports.createContainer = void 0;
 const container_1 = __importDefault(require("../model/container"));
 const user_1 = __importDefault(require("../model/user"));
+const productionLog_1 = __importDefault(require("../model/productionLog"));
+const pdiVerification_1 = __importDefault(require("../model/pdiVerification"));
+const payment_1 = __importDefault(require("../model/payment"));
 const notify_1 = require("../utils/notify");
 const penalty_1 = require("../utils/penalty");
 const getPagination = (query) => {
@@ -205,6 +208,12 @@ const deleteContainer = (req, res) => __awaiter(void 0, void 0, void 0, function
         const container = yield container_1.default.findByIdAndDelete(id);
         if (!container)
             return res.status(404).json({ message: "Container not found" });
+        // Cascade: remove dependent records so nothing is left orphaned.
+        yield Promise.all([
+            productionLog_1.default.deleteMany({ container: id }),
+            pdiVerification_1.default.deleteMany({ container: id }),
+            payment_1.default.deleteOne({ container: id }),
+        ]);
         return res.status(200).json({ message: "Container deleted" });
     }
     catch (err) {

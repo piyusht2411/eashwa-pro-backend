@@ -17,4 +17,8 @@ router.get("/container/:containerId", (0, authMiddleware_1.requireRole)("admin",
 router.get("/history", (0, authMiddleware_1.requireRole)("team"), productionLog_1.getTeamHistory);
 // Admin & PDI & Team: get a single production log by ID (used by notification detail screen)
 router.get("/:logId", (0, authMiddleware_1.requireRole)("admin", "pdi", "team"), productionLog_1.getLogById);
+// Team: edit own production log (creator-only, enforced in controller)
+router.patch("/:logId", (0, authMiddleware_1.requireRole)("team"), productionLog_1.updateProductionLog);
+// Team: delete own production log (creator-only, enforced in controller)
+router.delete("/:logId", (0, authMiddleware_1.requireRole)("team"), productionLog_1.deleteProductionLog);
 exports.default = router;

@@ -12,7 +12,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getLogById = exports.getTeamHistory = exports.getTeamDashboard = exports.getPendingLogs = exports.getLogsByContainer = exports.submitProductionLog = void 0;
+exports.getLogById = exports.deleteProductionLog = exports.updateProductionLog = exports.getTeamHistory = exports.getTeamDashboard = exports.getPendingLogs = exports.getLogsByContainer = exports.submitProductionLog = void 0;
 const mongoose_1 = __importDefault(require("mongoose"));
 const productionLog_1 = __importDefault(require("../model/productionLog"));
 const container_1 = __importDefault(require("../model/container"));
@@ -284,6 +284,85 @@ const getTeamHistory = (req, res) => __awaiter(void 0, void 0, void 0, function*
     }
 });
 exports.getTeamHistory = getTeamHistory;
+// ─── Team: Edit own Production Log ───────────────────────────────────────────
+const updateProductionLog = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { logId } = req.params;
+        const { reportedQuantity, date } = req.body;
+        const teamId = req.userId;
+        const log = yield productionLog_1.default.findById(logId);
+        if (!log)
+            return res.status(404).json({ message: "Production log not found" });
+        // Creator-only: a team may edit only its own logs
+        if (log.team.toString() !== teamId) {
+            return res.status(403).json({ message: "You can only edit your own production logs" });
+        }
+        if (reportedQuantity !== undefined) {
+            if (Number(reportedQuantity) < 0 || Number.isNaN(Number(reportedQuantity))) {
+                return res.status(400).json({ message: "reportedQuantity must be a non-negative number" });
+            }
+            log.reportedQuantity = Number(reportedQuantity);
+        }
+        if (date !== undefined) {
+            const logDate = new Date(date);
+            logDate.setUTCHours(0, 0, 0, 0);
+            log.date = logDate;
+        }
+        // Auto-recalc downstream: keep the linked PDI verification consistent.
+        const verification = yield pdiVerification_1.default.findOne({ productionLog: log._id });
+        if (verification) {
+            // Verified can never exceed the (possibly reduced) reported quantity.
+            if (verification.verifiedQuantity > log.reportedQuantity) {
+                verification.verifiedQuantity = log.reportedQuantity;
+            }
+            const incomplete = verification.verifiedQuantity < log.reportedQuantity;
+            verification.isIncomplete = incomplete;
+            verification.missingQuantity = log.reportedQuantity - verification.verifiedQuantity;
+            yield verification.save();
+            log.verifiedQuantity = verification.verifiedQuantity;
+            log.status = incomplete ? "incomplete" : "verified";
+        }
+        yield log.save();
+        // Notify PDI so they can re-check the edited report
+        const pdiUsers = yield user_1.default.find({ role: "pdi" }).select("_id");
+        yield (0, notify_1.sendPushNotificationToMany)(pdiUsers.map((u) => u._id), "Production Log Edited", `A production report was edited to ${log.reportedQuantity} units.`, { logId: log._id.toString(), containerId: log.container.toString(), type: "production_log_edited" });
+        return res.status(200).json({ message: "Production log updated", log });
+    }
+    catch (err) {
+        if (err.code === 11000) {
+            return res.status(409).json({ message: "A log for this date already exists for this container" });
+        }
+        return res.status(500).json({ message: err.message });
+    }
+});
+exports.updateProductionLog = updateProductionLog;
+// ─── Team: Delete own Production Log ──────────────────────────────────────────
+const deleteProductionLog = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { logId } = req.params;
+        const teamId = req.userId;
+        const log = yield productionLog_1.default.findById(logId);
+        if (!log)
+            return res.status(404).json({ message: "Production log not found" });
+        // Creator-only: a team may delete only its own logs
+        if (log.team.toString() !== teamId) {
+            return res.status(403).json({ message: "You can only delete your own production logs" });
+        }
+        const containerId = log.container.toString();
+        // Cascade: remove any PDI verification tied to this log.
+        // Payment totals recompute live from PDI data on the next read.
+        yield pdiVerification_1.default.deleteOne({ productionLog: log._id });
+        yield productionLog_1.default.deleteOne({ _id: log._id });
+        // Notify PDI + admins about the removal
+        const recipients = yield user_1.default.find({ role: { $in: ["pdi", "admin"] } }).select("_id");
+        yield (0, notify_1.sendPushNotificationToMany)(recipients.map((u) => u._id), "Production Log Deleted", `A production report was deleted by the team.`, { containerId, type: "production_log_deleted" });
+        return res.status(200).json({ message: "Production log deleted", logId });
+    }
+    catch (err) {
+        return res.status(500).json({ message: err.message });
+    }
+});
+exports.deleteProductionLog = deleteProductionLog;
 // ─── Get Single Production Log by ID (Admin / PDI / Team) ────────────────────
 const getLogById = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     var _a;

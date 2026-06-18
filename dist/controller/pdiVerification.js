@@ -12,7 +12,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getPdiDashboard = exports.getVerificationByLog = exports.getVerificationsByContainer = exports.unverifyProductionLog = exports.editIncompleteVerification = exports.verifyProductionLog = void 0;
+exports.getPdiDashboard = exports.getVerificationByLog = exports.getVerificationsByContainer = exports.unverifyProductionLog = exports.editVerification = exports.verifyProductionLog = void 0;
 const pdiVerification_1 = __importDefault(require("../model/pdiVerification"));
 const productionLog_1 = __importDefault(require("../model/productionLog"));
 const container_1 = __importDefault(require("../model/container"));
@@ -110,8 +110,8 @@ const verifyProductionLog = (req, res) => __awaiter(void 0, void 0, void 0, func
     }
 });
 exports.verifyProductionLog = verifyProductionLog;
-// ─── PDI: Edit an incomplete verification ─────────────────────────────────────
-const editIncompleteVerification = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+// ─── PDI: Edit a verification ─────────────────────────────────────────────────
+const editVerification = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     var _a, _b, _c, _d, _e, _f;
     try {
         const { verificationId } = req.params;
@@ -124,10 +124,9 @@ const editIncompleteVerification = (req, res) => __awaiter(void 0, void 0, void 
         if (!verification) {
             return res.status(404).json({ message: "Verification not found" });
         }
-        if (!verification.isIncomplete) {
-            return res.status(409).json({
-                message: "Only incomplete verifications can be edited",
-            });
+        // Creator-only: a PDI user may edit only verifications they made
+        if (verification.verifiedBy.toString() !== pdiId) {
+            return res.status(403).json({ message: "You can only edit your own verifications" });
         }
         const log = yield productionLog_1.default.findById(verification.productionLog).populate("container");
         if (!log)
@@ -192,7 +191,7 @@ const editIncompleteVerification = (req, res) => __awaiter(void 0, void 0, void 
         return res.status(500).json({ message: err.message });
     }
 });
-exports.editIncompleteVerification = editIncompleteVerification;
+exports.editVerification = editVerification;
 // ─── PDI: Unverify a Production Log (revert to pending) ──────────────────────
 // Deletes the PDI verification record and sets the log back to "pending" so it
 // re-enters the verification queue. Notifies the team and admins.
@@ -208,6 +207,10 @@ const unverifyProductionLog = (req, res) => __awaiter(void 0, void 0, void 0, fu
             return res.status(409).json({ message: "This log is already pending" });
         }
         if (verification) {
+            // Creator-only: a PDI user may revert only verifications they made
+            if (verification.verifiedBy.toString() !== req.userId) {
+                return res.status(403).json({ message: "You can only revert your own verifications" });
+            }
             yield pdiVerification_1.default.deleteOne({ _id: verification._id });
         }
         // Revert the production log to pending

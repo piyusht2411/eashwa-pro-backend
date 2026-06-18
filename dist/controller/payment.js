@@ -12,7 +12,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getPaymentByContainer = exports.getMyPayments = exports.getAllPayments = exports.makePayment = exports.getOrInitPayment = void 0;
+exports.getPaymentByContainer = exports.getMyPayments = exports.getAllPayments = exports.deletePaymentEntry = exports.updatePaymentEntry = exports.makePayment = exports.getOrInitPayment = void 0;
 const payment_1 = __importDefault(require("../model/payment"));
 const pdiVerification_1 = __importDefault(require("../model/pdiVerification"));
 const container_1 = __importDefault(require("../model/container"));
@@ -32,6 +32,35 @@ const recalcPaymentTotals = (containerId, ratePerUnit, targetQuantity) => __awai
     const totalVerifiedQty = Math.min(targetQuantity !== null && targetQuantity !== void 0 ? targetQuantity : 0, rawVerifiedQty);
     const totalAmount = totalVerifiedQty * ratePerUnit;
     return { totalVerifiedQty, totalAmount };
+});
+// ─── Helper: recompute a payment's display totals from LIVE PDI data ─────────
+// Read endpoints persist stale stored totals (e.g. created when verified was
+// over-target). This recomputes verified/amount/remaining from current PDI
+// verifications, capped at the container target, without mutating the DB.
+// `paidAmount` is preserved; remainingAmount may be negative if overpaid earlier.
+const enrichPaymentsWithLiveTotals = (paymentObjs) => __awaiter(void 0, void 0, void 0, function* () {
+    const containerIds = paymentObjs
+        .map((p) => { var _a; return (_a = p.container) === null || _a === void 0 ? void 0 : _a._id; })
+        .filter(Boolean);
+    const verifiedMap = yield (0, penalty_1.getVerifiedByContainer)(containerIds);
+    return paymentObjs.map((obj) => {
+        var _a, _b, _c, _d, _e, _f;
+        const container = (_a = obj.container) !== null && _a !== void 0 ? _a : {};
+        const target = (_b = container.quantity) !== null && _b !== void 0 ? _b : 0;
+        const rawVerified = (_c = verifiedMap.get(String(container._id))) !== null && _c !== void 0 ? _c : 0;
+        const cappedVerified = Math.min(target, rawVerified);
+        const rate = (_d = container.ratePerUnit) !== null && _d !== void 0 ? _d : 0;
+        const totalAmount = cappedVerified * rate;
+        const paidAmount = (_e = obj.paidAmount) !== null && _e !== void 0 ? _e : 0;
+        obj.totalVerifiedQuantity = cappedVerified;
+        obj.totalAmount = totalAmount;
+        obj.remainingAmount = totalAmount - paidAmount;
+        const { pendingQuantity, penaltyPerUnit, totalPenalty } = (0, penalty_1.computePenalty)(target, cappedVerified, (_f = container.penaltyPerUnit) !== null && _f !== void 0 ? _f : 0);
+        obj.pendingQuantity = pendingQuantity;
+        obj.penaltyPerUnit = penaltyPerUnit;
+        obj.totalPenalty = totalPenalty;
+        return obj;
+    });
 });
 // ─── Admin: Initialize or Get Payment Ledger for a Container ─────────────────
 // This auto-creates the payment ledger based on verified data
@@ -118,6 +147,76 @@ const makePayment = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
     }
 });
 exports.makePayment = makePayment;
+// ─── Admin: Edit a recorded payment transaction ──────────────────────────────
+const updatePaymentEntry = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a, _b;
+    try {
+        const { containerId, index } = req.params;
+        const { amount, note } = req.body;
+        const payment = yield payment_1.default.findOne({ container: containerId });
+        if (!payment)
+            return res.status(404).json({ message: "No payment record found for this container" });
+        const idx = Number(index);
+        if (Number.isNaN(idx) || idx < 0 || idx >= payment.payments.length) {
+            return res.status(404).json({ message: "Payment entry not found" });
+        }
+        if (amount !== undefined) {
+            if (Number(amount) <= 0 || Number.isNaN(Number(amount))) {
+                return res.status(400).json({ message: "amount must be a positive number" });
+            }
+            payment.payments[idx].amount = Number(amount);
+        }
+        if (note !== undefined)
+            payment.payments[idx].note = note;
+        // Recalc totals from live (capped) verified data + the edited entries
+        const container = yield container_1.default.findById(containerId);
+        const { totalVerifiedQty, totalAmount } = yield recalcPaymentTotals(containerId, (_a = container === null || container === void 0 ? void 0 : container.ratePerUnit) !== null && _a !== void 0 ? _a : 0, (_b = container === null || container === void 0 ? void 0 : container.quantity) !== null && _b !== void 0 ? _b : 0);
+        const paidAmount = payment.payments.reduce((s, p) => s + p.amount, 0);
+        if (paidAmount > totalAmount) {
+            return res.status(400).json({
+                message: `Total paid (₹${paidAmount}) cannot exceed the amount due (₹${totalAmount})`,
+            });
+        }
+        payment.totalVerifiedQuantity = totalVerifiedQty;
+        payment.totalAmount = totalAmount;
+        payment.paidAmount = paidAmount;
+        payment.remainingAmount = totalAmount - paidAmount;
+        yield payment.save();
+        return res.status(200).json({ message: "Payment entry updated", payment });
+    }
+    catch (err) {
+        return res.status(500).json({ message: err.message });
+    }
+});
+exports.updatePaymentEntry = updatePaymentEntry;
+// ─── Admin: Delete a recorded payment transaction ────────────────────────────
+const deletePaymentEntry = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a, _b;
+    try {
+        const { containerId, index } = req.params;
+        const payment = yield payment_1.default.findOne({ container: containerId });
+        if (!payment)
+            return res.status(404).json({ message: "No payment record found for this container" });
+        const idx = Number(index);
+        if (Number.isNaN(idx) || idx < 0 || idx >= payment.payments.length) {
+            return res.status(404).json({ message: "Payment entry not found" });
+        }
+        payment.payments.splice(idx, 1);
+        const container = yield container_1.default.findById(containerId);
+        const { totalVerifiedQty, totalAmount } = yield recalcPaymentTotals(containerId, (_a = container === null || container === void 0 ? void 0 : container.ratePerUnit) !== null && _a !== void 0 ? _a : 0, (_b = container === null || container === void 0 ? void 0 : container.quantity) !== null && _b !== void 0 ? _b : 0);
+        const paidAmount = payment.payments.reduce((s, p) => s + p.amount, 0);
+        payment.totalVerifiedQuantity = totalVerifiedQty;
+        payment.totalAmount = totalAmount;
+        payment.paidAmount = paidAmount;
+        payment.remainingAmount = totalAmount - paidAmount;
+        yield payment.save();
+        return res.status(200).json({ message: "Payment entry deleted", payment });
+    }
+    catch (err) {
+        return res.status(500).json({ message: err.message });
+    }
+});
+exports.deletePaymentEntry = deletePaymentEntry;
 // ─── Get All Payment Ledgers (Admin only) ─────────────────────────────────────
 const getAllPayments = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
@@ -132,17 +231,9 @@ const getAllPayments = (req, res) => __awaiter(void 0, void 0, void 0, function*
                 .limit(limit),
             payment_1.default.countDocuments(),
         ]);
-        // Attach the live hold/penalty for each container so the app can net it out
-        const enrichedPayments = payments.map((p) => {
-            var _a, _b, _c, _d;
-            const obj = p.toObject();
-            const container = (_a = obj.container) !== null && _a !== void 0 ? _a : {};
-            const { pendingQuantity, penaltyPerUnit, totalPenalty } = (0, penalty_1.computePenalty)((_b = container.quantity) !== null && _b !== void 0 ? _b : 0, (_c = obj.totalVerifiedQuantity) !== null && _c !== void 0 ? _c : 0, (_d = container.penaltyPerUnit) !== null && _d !== void 0 ? _d : 0);
-            obj.pendingQuantity = pendingQuantity;
-            obj.penaltyPerUnit = penaltyPerUnit;
-            obj.totalPenalty = totalPenalty;
-            return obj;
-        });
+        // Recompute verified/amount/remaining + hold from live PDI data, capped at
+        // each container target, so totals never reflect over-verified counts.
+        const enrichedPayments = yield enrichPaymentsWithLiveTotals(payments.map((p) => p.toObject()));
         return res.status(200).json({
             payments: enrichedPayments,
             pagination: {
@@ -166,20 +257,26 @@ const getMyPayments = (req, res) => __awaiter(void 0, void 0, void 0, function* 
         const { page, limit, skip } = getPagination(req.query);
         const [payments, total, summaryPayments] = yield Promise.all([
             payment_1.default.find({ team: teamId })
-                .populate("container", "model quantity ratePerUnit status date")
+                .populate("container", "model quantity ratePerUnit penaltyPerUnit status date")
                 .sort({ createdAt: -1 })
                 .skip(skip)
                 .limit(limit),
             payment_1.default.countDocuments({ team: teamId }),
-            payment_1.default.find({ team: teamId }).select("totalAmount paidAmount remainingAmount"),
+            // All team payments (with container) so the summary can be capped too
+            payment_1.default.find({ team: teamId }).populate("container", "quantity ratePerUnit"),
+        ]);
+        // Recompute paginated list + full summary from live PDI data, capped at target
+        const [enrichedPayments, enrichedSummary] = yield Promise.all([
+            enrichPaymentsWithLiveTotals(payments.map((p) => p.toObject())),
+            enrichPaymentsWithLiveTotals(summaryPayments.map((p) => p.toObject())),
         ]);
         const summary = {
-            totalEarned: summaryPayments.reduce((s, p) => s + p.totalAmount, 0),
-            totalPaid: summaryPayments.reduce((s, p) => s + p.paidAmount, 0),
-            totalRemaining: summaryPayments.reduce((s, p) => s + p.remainingAmount, 0),
+            totalEarned: enrichedSummary.reduce((s, p) => s + p.totalAmount, 0),
+            totalPaid: enrichedSummary.reduce((s, p) => { var _a; return s + ((_a = p.paidAmount) !== null && _a !== void 0 ? _a : 0); }, 0),
+            totalRemaining: enrichedSummary.reduce((s, p) => s + p.remainingAmount, 0),
         };
         return res.status(200).json({
-            payments,
+            payments: enrichedPayments,
             summary,
             pagination: {
                 page,
@@ -200,11 +297,13 @@ const getPaymentByContainer = (req, res) => __awaiter(void 0, void 0, void 0, fu
     try {
         const { containerId } = req.params;
         const payment = yield payment_1.default.findOne({ container: containerId })
-            .populate("container", "model quantity ratePerUnit status date")
+            .populate("container", "model quantity ratePerUnit penaltyPerUnit status date")
             .populate("team", "name email phone");
         if (!payment)
             return res.status(404).json({ message: "No payment record found for this container" });
-        return res.status(200).json({ payment });
+        // Recompute totals from live PDI data, capped at target.
+        const [enriched] = yield enrichPaymentsWithLiveTotals([payment.toObject()]);
+        return res.status(200).json({ payment: enriched });
     }
     catch (err) {
         return res.status(500).json({ message: err.message });

@@ -15,4 +15,8 @@ router.get("/container/:containerId", (0, authMiddleware_1.requireRole)("admin")
 router.get("/container/:containerId/summary", (0, authMiddleware_1.requireRole)("admin", "team"), payment_1.getPaymentByContainer);
 // Admin: make a payment for a container
 router.post("/container/:containerId/pay", (0, authMiddleware_1.requireRole)("admin"), payment_1.makePayment);
+// Admin: edit a recorded payment transaction (by its index in the ledger)
+router.patch("/container/:containerId/pay/:index", (0, authMiddleware_1.requireRole)("admin"), payment_1.updatePaymentEntry);
+// Admin: delete a recorded payment transaction (by its index in the ledger)
+router.delete("/container/:containerId/pay/:index", (0, authMiddleware_1.requireRole)("admin"), payment_1.deletePaymentEntry);
 exports.default = router;

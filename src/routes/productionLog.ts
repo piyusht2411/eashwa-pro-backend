@@ -6,6 +6,8 @@ import {
   getPendingLogs,
   getTeamDashboard,
   getTeamHistory,
+  updateProductionLog,
+  deleteProductionLog,
 } from "../controller/productionLog";
 import { authenticateToken, requireRole } from "../middleware/authMiddleware";
 
@@ -30,6 +32,12 @@ router.get("/history", requireRole("team"), getTeamHistory);
 
 // Admin & PDI & Team: get a single production log by ID (used by notification detail screen)
 router.get("/:logId", requireRole("admin", "pdi", "team"), getLogById);
+
+// Team: edit own production log (creator-only, enforced in controller)
+router.patch("/:logId", requireRole("team"), updateProductionLog);
+
+// Team: delete own production log (creator-only, enforced in controller)
+router.delete("/:logId", requireRole("team"), deleteProductionLog);
 
 export default router;
 

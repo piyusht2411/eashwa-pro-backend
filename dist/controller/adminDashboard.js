@@ -30,43 +30,39 @@ const getPagination = (query) => {
 };
 // ─── Admin Dashboard Summary ─────────────────────────────────────────────────
 const getAdminDashboardSummary = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     try {
-        const [verifiedAgg, pendingVerify, paymentAgg, miscAgg] = yield Promise.all([
-            pdiVerification_1.default.aggregate([
-                { $group: { _id: null, total: { $sum: "$verifiedQuantity" } } },
-            ]),
+        const [pendingVerify, paymentAgg, miscAgg] = yield Promise.all([
             productionLog_1.default.countDocuments({ status: "pending" }),
+            // Only paidAmount is read from the ledger — it is real money disbursed.
             payment_1.default.aggregate([
-                {
-                    $group: {
-                        _id: null,
-                        totalAmount: { $sum: "$totalAmount" },
-                        paidAmount: { $sum: "$paidAmount" },
-                        remainingAmount: { $sum: "$remainingAmount" },
-                    },
-                },
+                { $group: { _id: null, paidAmount: { $sum: "$paidAmount" } } },
             ]),
             miscellaneous_1.default.aggregate([
                 { $group: { _id: null, total: { $sum: "$amount" } } },
             ]),
         ]);
-        const totalProduction = (_b = (_a = verifiedAgg[0]) === null || _a === void 0 ? void 0 : _a.total) !== null && _b !== void 0 ? _b : 0;
-        const totalAmount = (_d = (_c = paymentAgg[0]) === null || _c === void 0 ? void 0 : _c.totalAmount) !== null && _d !== void 0 ? _d : 0;
-        const paidAmount = (_f = (_e = paymentAgg[0]) === null || _e === void 0 ? void 0 : _e.paidAmount) !== null && _f !== void 0 ? _f : 0;
-        const miscellaneousAmount = (_h = (_g = miscAgg[0]) === null || _g === void 0 ? void 0 : _g.total) !== null && _h !== void 0 ? _h : 0;
-        // Live penalty across all non-cancelled containers
-        const penaltyContainers = yield container_1.default.find({ status: { $ne: "cancelled" } }).select("quantity penaltyPerUnit");
+        const paidAmount = (_b = (_a = paymentAgg[0]) === null || _a === void 0 ? void 0 : _a.paidAmount) !== null && _b !== void 0 ? _b : 0;
+        const miscellaneousAmount = (_d = (_c = miscAgg[0]) === null || _c === void 0 ? void 0 : _c.total) !== null && _d !== void 0 ? _d : 0;
+        // Derive production + earned amount from live PDI data, capped at each
+        // container target, so neither verified nor money can exceed the target.
+        const penaltyContainers = yield container_1.default.find({ status: { $ne: "cancelled" } }).select("quantity penaltyPerUnit ratePerUnit");
         const verifiedMap = yield (0, penalty_1.getVerifiedByContainer)(penaltyContainers.map((c) => c._id));
         let totalPenalty = 0;
         let totalPendingVehicles = 0;
+        let totalProduction = 0;
+        let totalAmount = 0;
         for (const c of penaltyContainers) {
-            const { pendingQuantity, totalPenalty: p } = (0, penalty_1.computePenalty)(c.quantity, (_j = verifiedMap.get(String(c._id))) !== null && _j !== void 0 ? _j : 0, (_k = c.penaltyPerUnit) !== null && _k !== void 0 ? _k : 0);
+            const rawVerified = (_e = verifiedMap.get(String(c._id))) !== null && _e !== void 0 ? _e : 0;
+            const cappedVerified = Math.min((_f = c.quantity) !== null && _f !== void 0 ? _f : 0, rawVerified);
+            totalProduction += cappedVerified;
+            totalAmount += cappedVerified * ((_g = c.ratePerUnit) !== null && _g !== void 0 ? _g : 0);
+            const { pendingQuantity, totalPenalty: p } = (0, penalty_1.computePenalty)(c.quantity, rawVerified, (_h = c.penaltyPerUnit) !== null && _h !== void 0 ? _h : 0);
             totalPenalty += p;
             totalPendingVehicles += pendingQuantity;
         }
         // Both the hold/penalty and miscellaneous deductions reduce what is still owed
-        const remainingAmount = ((_m = (_l = paymentAgg[0]) === null || _l === void 0 ? void 0 : _l.remainingAmount) !== null && _m !== void 0 ? _m : 0) - miscellaneousAmount - totalPenalty;
+        const remainingAmount = totalAmount - paidAmount - miscellaneousAmount - totalPenalty;
         return res.status(200).json({
             totalProduction,
             pendingVerify,
@@ -85,7 +81,7 @@ const getAdminDashboardSummary = (req, res) => __awaiter(void 0, void 0, void 0,
 exports.getAdminDashboardSummary = getAdminDashboardSummary;
 // ─── Admin Report & History ──────────────────────────────────────────────────
 const getAdminReport = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     try {
         const { startDate, endDate, teamId } = req.query;
         const { page, limit, skip } = getPagination(req.query);
@@ -138,6 +134,7 @@ const getAdminReport = (req, res) => __awaiter(void 0, void 0, void 0, function*
                 $group: {
                     _id: "$container._id",
                     target: { $first: "$container.quantity" },
+                    rate: { $first: "$container.ratePerUnit" },
                     reported: { $sum: "$reportedQuantity" },
                     verified: { $sum: { $ifNull: ["$pdi.verifiedQuantity", 0] } },
                     incomplete: {
@@ -176,42 +173,38 @@ const getAdminReport = (req, res) => __awaiter(void 0, void 0, void 0, function*
             productionLog_1.default.aggregate(countPipeline),
         ]);
         // Roll up the per-container groups, capping verified at each target.
+        // totalAmount is derived from capped verified × rate (never over-target),
+        // not from the stored Payment.totalAmount which can be stale/over-counted.
         const summaryRow = summaryRes.reduce((acc, row) => {
-            var _a, _b, _c, _d;
+            var _a, _b, _c, _d, _e;
             const target = (_a = row.target) !== null && _a !== void 0 ? _a : 0;
-            acc.totalReported += (_b = row.reported) !== null && _b !== void 0 ? _b : 0;
-            acc.totalVerified += Math.min(target, (_c = row.verified) !== null && _c !== void 0 ? _c : 0);
-            acc.totalIncomplete += (_d = row.incomplete) !== null && _d !== void 0 ? _d : 0;
+            const cappedVerified = Math.min(target, (_b = row.verified) !== null && _b !== void 0 ? _b : 0);
+            acc.totalReported += (_c = row.reported) !== null && _c !== void 0 ? _c : 0;
+            acc.totalVerified += cappedVerified;
+            acc.totalAmount += cappedVerified * ((_d = row.rate) !== null && _d !== void 0 ? _d : 0);
+            acc.totalIncomplete += (_e = row.incomplete) !== null && _e !== void 0 ? _e : 0;
             if (row._id)
                 acc.containerIds.push(row._id);
             return acc;
-        }, { totalReported: 0, totalVerified: 0, totalIncomplete: 0, containerIds: [] });
-        let totalAmount = 0;
+        }, { totalReported: 0, totalVerified: 0, totalAmount: 0, totalIncomplete: 0, containerIds: [] });
+        let totalAmount = summaryRow.totalAmount;
         let totalPaid = 0;
         let totalRemaining = 0;
         if ((_a = summaryRow === null || summaryRow === void 0 ? void 0 : summaryRow.containerIds) === null || _a === void 0 ? void 0 : _a.length) {
+            // Paid is real money already disbursed — read it from the ledger.
             const paymentAgg = yield payment_1.default.aggregate([
                 { $match: { container: { $in: summaryRow.containerIds } } },
-                {
-                    $group: {
-                        _id: null,
-                        totalAmount: { $sum: "$totalAmount" },
-                        totalPaid: { $sum: "$paidAmount" },
-                        totalRemaining: { $sum: "$remainingAmount" },
-                    },
-                },
+                { $group: { _id: null, totalPaid: { $sum: "$paidAmount" } } },
             ]);
-            totalAmount = (_c = (_b = paymentAgg[0]) === null || _b === void 0 ? void 0 : _b.totalAmount) !== null && _c !== void 0 ? _c : 0;
-            totalPaid = (_g = (_e = (_d = paymentAgg[0]) === null || _d === void 0 ? void 0 : _d.paidAmount) !== null && _e !== void 0 ? _e : (_f = paymentAgg[0]) === null || _f === void 0 ? void 0 : _f.totalPaid) !== null && _g !== void 0 ? _g : 0;
-            totalRemaining =
-                (_l = (_j = (_h = paymentAgg[0]) === null || _h === void 0 ? void 0 : _h.totalRemaining) !== null && _j !== void 0 ? _j : (_k = paymentAgg[0]) === null || _k === void 0 ? void 0 : _k.remainingAmount) !== null && _l !== void 0 ? _l : 0;
+            totalPaid = (_c = (_b = paymentAgg[0]) === null || _b === void 0 ? void 0 : _b.totalPaid) !== null && _c !== void 0 ? _c : 0;
+            totalRemaining = totalAmount - totalPaid;
         }
-        const total = (_o = (_m = countRes[0]) === null || _m === void 0 ? void 0 : _m.total) !== null && _o !== void 0 ? _o : 0;
+        const total = (_e = (_d = countRes[0]) === null || _d === void 0 ? void 0 : _d.total) !== null && _e !== void 0 ? _e : 0;
         return res.status(200).json({
             summary: {
-                totalReported: (_p = summaryRow === null || summaryRow === void 0 ? void 0 : summaryRow.totalReported) !== null && _p !== void 0 ? _p : 0,
-                totalVerified: (_q = summaryRow === null || summaryRow === void 0 ? void 0 : summaryRow.totalVerified) !== null && _q !== void 0 ? _q : 0,
-                totalIncomplete: (_r = summaryRow === null || summaryRow === void 0 ? void 0 : summaryRow.totalIncomplete) !== null && _r !== void 0 ? _r : 0,
+                totalReported: (_f = summaryRow === null || summaryRow === void 0 ? void 0 : summaryRow.totalReported) !== null && _f !== void 0 ? _f : 0,
+                totalVerified: (_g = summaryRow === null || summaryRow === void 0 ? void 0 : summaryRow.totalVerified) !== null && _g !== void 0 ? _g : 0,
+                totalIncomplete: (_h = summaryRow === null || summaryRow === void 0 ? void 0 : summaryRow.totalIncomplete) !== null && _h !== void 0 ? _h : 0,
                 totalAmount,
                 totalPaid,
                 totalRemaining,
