@@ -1,19 +1,30 @@
 import { Request, Response } from "express";
 import User from "../../model/user";
+import Driver from "../../model/driver";
 import { getPagination, buildPaginationMeta } from "../../utils/helpers";
 
 // ─── Create Transport User (Admin only) ───────────────────────────────────────
 export const createTransportUser = async (req: Request, res: Response) => {
   try {
-    const { name, email, password, role, phone } = req.body;
+    const { name, email, password, role, phone, vehicleNumber } = req.body;
 
     if (!name || !email || !password || !role) {
-      return res.status(400).json({ message: "name, email, password and role are required" });
+      return res
+        .status(400)
+        .json({ message: "name, email, password and role are required" });
+    }
+
+    if (role === "driver" && !vehicleNumber) {
+      return res
+        .status(400)
+        .json({ message: "vehicleNumber is required for driver accounts" });
     }
 
     const allowed = ["admin", "accounts", "driver"];
     if (!allowed.includes(role)) {
-      return res.status(400).json({ message: "Role must be admin | accounts | driver" });
+      return res
+        .status(400)
+        .json({ message: "Role must be admin | accounts | driver" });
     }
 
     const exists = await User.findOne({ email: email.toLowerCase().trim() });
@@ -22,14 +33,38 @@ export const createTransportUser = async (req: Request, res: Response) => {
     }
 
     if (password.length < 6) {
-      return res.status(400).json({ message: "Password must be at least 6 characters" });
+      return res
+        .status(400)
+        .json({ message: "Password must be at least 6 characters" });
     }
 
-    const user = await User.create({ name, email, password, role, phone: phone || "", portal: "transport" });
+    const user = await User.create({
+      name,
+      email,
+      password,
+      role,
+      phone: phone || "",
+      portal: "transport",
+    });
+
+    if (role === "driver") {
+      await Driver.create({
+        name: user.name,
+        vehicleNumber: vehicleNumber.trim().toUpperCase(),
+        userId: user._id,
+      });
+    }
 
     return res.status(201).json({
       message: "User created successfully",
-      user: { _id: user._id, name: user.name, email: user.email, role: user.role, portal: user.portal, phone: user.phone },
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        portal: user.portal,
+        phone: user.phone,
+      },
     });
   } catch (err: any) {
     return res.status(500).json({ message: err.message });
@@ -67,7 +102,10 @@ export const getAllTransportUsers = async (req: Request, res: Response) => {
 // ─── Get Transport User By ID (Admin only) ────────────────────────────────────
 export const getTransportUserById = async (req: Request, res: Response) => {
   try {
-    const user = await User.findOne({ _id: req.params.id, portal: "transport" }).select("-password -fcmToken");
+    const user = await User.findOne({
+      _id: req.params.id,
+      portal: "transport",
+    }).select("-password -fcmToken");
     if (!user) return res.status(404).json({ message: "User not found" });
     return res.status(200).json({ user });
   } catch (err: any) {
@@ -87,14 +125,20 @@ export const updateTransportUser = async (req: Request, res: Response) => {
     if (role !== undefined) {
       const allowed = ["admin", "accounts", "driver"];
       if (!allowed.includes(role)) {
-        return res.status(400).json({ message: "Role must be admin | accounts | driver" });
+        return res
+          .status(400)
+          .json({ message: "Role must be admin | accounts | driver" });
       }
       user.role = role;
     }
 
     if (email !== undefined) {
-      const exists = await User.findOne({ email: email.toLowerCase().trim(), _id: { $ne: id } });
-      if (exists) return res.status(409).json({ message: "Email already in use" });
+      const exists = await User.findOne({
+        email: email.toLowerCase().trim(),
+        _id: { $ne: id },
+      });
+      if (exists)
+        return res.status(409).json({ message: "Email already in use" });
       user.email = email;
     }
 
@@ -102,7 +146,10 @@ export const updateTransportUser = async (req: Request, res: Response) => {
     if (phone !== undefined) user.phone = phone;
     if (isActive !== undefined) user.isActive = isActive;
     if (password !== undefined) {
-      if (password.length < 6) return res.status(400).json({ message: "Password must be at least 6 characters" });
+      if (password.length < 6)
+        return res
+          .status(400)
+          .json({ message: "Password must be at least 6 characters" });
       user.password = password;
     }
 
@@ -110,7 +157,15 @@ export const updateTransportUser = async (req: Request, res: Response) => {
 
     return res.status(200).json({
       message: "User updated successfully",
-      user: { _id: user._id, name: user.name, email: user.email, role: user.role, portal: user.portal, phone: user.phone, isActive: user.isActive },
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        portal: user.portal,
+        phone: user.phone,
+        isActive: user.isActive,
+      },
     });
   } catch (err: any) {
     return res.status(500).json({ message: err.message });
@@ -123,7 +178,9 @@ export const deleteTransportUser = async (req: Request, res: Response) => {
     const { id } = req.params;
 
     if (id === req.userId) {
-      return res.status(400).json({ message: "You cannot delete your own account" });
+      return res
+        .status(400)
+        .json({ message: "You cannot delete your own account" });
     }
 
     const user = await User.findOne({ _id: id, portal: "transport" });
