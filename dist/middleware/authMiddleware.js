@@ -12,7 +12,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.requireRole = exports.authenticateToken = void 0;
+exports.requirePortal = exports.requireRole = exports.authenticateToken = void 0;
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const user_1 = __importDefault(require("../model/user"));
 // ─── Authenticate JWT ─────────────────────────────────────────────────────────
@@ -25,12 +25,16 @@ const authenticateToken = (req, res, next) => __awaiter(void 0, void 0, void 0, 
     const token = authHeader.replace("Bearer ", "").trim();
     try {
         const decoded = jsonwebtoken_1.default.verify(token, process.env.JWT_SECRET_KEY || "");
-        const user = yield user_1.default.findById(decoded.userId).select("_id role name");
+        const user = yield user_1.default.findById(decoded.userId).select("_id role portal name isActive");
         if (!user) {
             return res.status(401).json({ message: "User not found" });
         }
+        if (!user.isActive) {
+            return res.status(403).json({ message: "Account is deactivated. Contact admin." });
+        }
         req.userId = decoded.userId;
         req.userRole = user.role;
+        req.userPortal = user.portal;
         next();
     }
     catch (err) {
@@ -41,10 +45,11 @@ const authenticateToken = (req, res, next) => __awaiter(void 0, void 0, void 0, 
         }
         try {
             const refreshDecoded = jsonwebtoken_1.default.verify(refreshToken, process.env.JWT_REFRESH_SECRET_KEY || "");
-            const newAuthToken = jsonwebtoken_1.default.sign({ userId: refreshDecoded.userId }, process.env.JWT_SECRET_KEY || "", { expiresIn: "30d" });
+            const newAuthToken = jsonwebtoken_1.default.sign({ userId: refreshDecoded.userId, role: refreshDecoded.role, portal: refreshDecoded.portal }, process.env.JWT_SECRET_KEY || "", { expiresIn: "30d" });
             res.header("Authorization", `Bearer ${newAuthToken}`);
             req.userId = refreshDecoded.userId;
             req.userRole = refreshDecoded.role;
+            req.userPortal = refreshDecoded.portal;
             next();
         }
         catch (_b) {
@@ -67,3 +72,17 @@ const requireRole = (...roles) => {
     });
 };
 exports.requireRole = requireRole;
+// ─── Portal Guard ────────────────────────────────────────────────────────────
+const requirePortal = (...portals) => {
+    return (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
+        const user = yield user_1.default.findById(req.userId).select("portal");
+        if (!user || !portals.includes(user.portal)) {
+            return res.status(403).json({
+                message: `Access denied. Required portal(s): ${portals.join(", ")}`,
+            });
+        }
+        req.userPortal = user.portal;
+        next();
+    });
+};
+exports.requirePortal = requirePortal;

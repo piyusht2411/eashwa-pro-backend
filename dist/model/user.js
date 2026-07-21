@@ -35,9 +35,18 @@ const userSchema = new mongoose_1.Schema({
         type: Date,
         default: null,
     },
+    // ─── Portal Separation ─────────────────────────────────────────────────────
+    // "production" users: roles admin | team | pdi
+    // "transport" users:  roles admin | accounts | driver
+    portal: {
+        type: String,
+        enum: ["production", "transport"],
+        default: "production",
+        required: true,
+    },
     role: {
         type: String,
-        enum: ["admin", "team", "pdi"],
+        enum: ["admin", "team", "pdi", "accounts", "driver"],
         default: "team",
         required: true,
     },
@@ -49,6 +58,10 @@ const userSchema = new mongoose_1.Schema({
         type: String,
         default: null,
         sparse: true,
+    },
+    isActive: {
+        type: Boolean,
+        default: true,
     },
 }, { timestamps: true });
 // Hash password & reset token before save

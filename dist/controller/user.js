@@ -26,19 +26,26 @@ const getPagination = (query) => {
     const skip = (page - 1) * limit;
     return { page, limit, skip };
 };
-// ─── Register / Create User-Team ─────────────────────────────────────────────
+// ─── Register / Create User ───────────────────────────────────────────────────
 const register = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const { name, email, password, role, phone } = req.body;
+        const { name, email, password, role, phone, portal } = req.body;
         if (!name || !email || !password || !role) {
             return res.status(400).json({ message: "name, email, password and role are required" });
         }
-        const allowed = ["admin", "team", "pdi"];
+        const resolvedPortal = portal || "production";
+        const productionRoles = ["admin", "team", "pdi"];
+        const transportRoles = ["admin", "accounts", "driver"];
+        const allowed = resolvedPortal === "transport" ? transportRoles : productionRoles;
         if (!allowed.includes(role)) {
-            return res.status(400).json({ message: "Role must be admin | team | pdi" });
+            return res.status(400).json({
+                message: resolvedPortal === "transport"
+                    ? "Role must be admin | accounts | driver"
+                    : "Role must be admin | team | pdi",
+            });
         }
-        if (role === "pdi") {
-            const existingPdi = yield user_1.default.findOne({ role: "pdi" });
+        if (resolvedPortal === "production" && role === "pdi") {
+            const existingPdi = yield user_1.default.findOne({ role: "pdi", portal: "production" });
             if (existingPdi) {
                 return res.status(409).json({ message: "PDI team already exists" });
             }
@@ -47,10 +54,10 @@ const register = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
         if (exists) {
             return res.status(409).json({ message: "Email already registered" });
         }
-        const user = yield user_1.default.create({ name, email, password, role, phone });
+        const user = yield user_1.default.create({ name, email, password, role, phone, portal: resolvedPortal });
         return res.status(201).json({
             message: "User created successfully",
-            user: { _id: user._id, name: user.name, email: user.email, role: user.role },
+            user: { _id: user._id, name: user.name, email: user.email, role: user.role, portal: user.portal },
         });
     }
     catch (err) {
@@ -65,16 +72,19 @@ const login = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
         if (!email || !password) {
             return res.status(400).json({ message: "email and password are required" });
         }
-        const user = yield user_1.default.findOne({ email });
+        const user = yield user_1.default.findOne({ email: email.toLowerCase().trim() });
         if (!user) {
             return res.status(401).json({ message: "Invalid credentials" });
+        }
+        if (!user.isActive) {
+            return res.status(403).json({ message: "Account is deactivated. Contact admin." });
         }
         const match = yield bcrypt_1.default.compare(password, user.password);
         if (!match) {
             return res.status(401).json({ message: "Invalid credentials" });
         }
-        const authToken = jsonwebtoken_1.default.sign({ userId: user._id, role: user.role }, process.env.JWT_SECRET_KEY || "", { expiresIn: "30d" });
-        const refreshToken = jsonwebtoken_1.default.sign({ userId: user._id, role: user.role }, process.env.JWT_REFRESH_SECRET_KEY || "", { expiresIn: "60d" });
+        const authToken = jsonwebtoken_1.default.sign({ userId: user._id, role: user.role, portal: user.portal }, process.env.JWT_SECRET_KEY || "", { expiresIn: "30d" });
+        const refreshToken = jsonwebtoken_1.default.sign({ userId: user._id, role: user.role, portal: user.portal }, process.env.JWT_REFRESH_SECRET_KEY || "", { expiresIn: "60d" });
         res.cookie("refreshToken", refreshToken, {
             httpOnly: true,
             secure: process.env.NODE_ENV === "production",
@@ -88,6 +98,7 @@ const login = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
                 name: user.name,
                 email: user.email,
                 role: user.role,
+                portal: user.portal,
                 phone: user.phone,
             },
         });
@@ -174,17 +185,23 @@ exports.getUserById = getUserById;
 const updateUser = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { id } = req.params;
-        const { name, email, password, role, phone } = req.body;
+        const { name, email, password, role, phone, isActive } = req.body;
         const user = yield user_1.default.findById(id);
         if (!user)
             return res.status(404).json({ message: "User not found" });
         if (role !== undefined) {
-            const allowed = ["admin", "team", "pdi"];
+            const productionRoles = ["admin", "team", "pdi"];
+            const transportRoles = ["admin", "accounts", "driver"];
+            const allowed = user.portal === "transport" ? transportRoles : productionRoles;
             if (!allowed.includes(role)) {
-                return res.status(400).json({ message: "Role must be admin | team | pdi" });
+                return res.status(400).json({
+                    message: user.portal === "transport"
+                        ? "Role must be admin | accounts | driver"
+                        : "Role must be admin | team | pdi",
+                });
             }
-            if (role === "pdi") {
-                const existingPdi = yield user_1.default.findOne({ role: "pdi", _id: { $ne: id } });
+            if (user.portal === "production" && role === "pdi") {
+                const existingPdi = yield user_1.default.findOne({ role: "pdi", portal: "production", _id: { $ne: id } });
                 if (existingPdi) {
                     return res.status(409).json({ message: "PDI team already exists" });
                 }
@@ -204,6 +221,8 @@ const updateUser = (req, res) => __awaiter(void 0, void 0, void 0, function* () 
             user.phone = phone;
         if (password !== undefined)
             user.password = password;
+        if (isActive !== undefined)
+            user.isActive = isActive;
         yield user.save();
         return res.status(200).json({
             message: "User updated successfully",
@@ -212,7 +231,9 @@ const updateUser = (req, res) => __awaiter(void 0, void 0, void 0, function* () 
                 name: user.name,
                 email: user.email,
                 role: user.role,
+                portal: user.portal,
                 phone: user.phone,
+                isActive: user.isActive,
             },
         });
     }

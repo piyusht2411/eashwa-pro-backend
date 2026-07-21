@@ -1,0 +1,14 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const driver_1 = require("../../controller/transport/driver");
+const authMiddleware_1 = require("../../middleware/authMiddleware");
+const router = (0, express_1.Router)();
+router.use(authMiddleware_1.authenticateToken);
+router.get("/", (0, authMiddleware_1.requireRole)("admin", "accounts"), driver_1.getAllDrivers);
+router.get("/:id", (0, authMiddleware_1.requireRole)("admin", "accounts", "driver"), driver_1.getDriverById);
+router.get("/:id/summary", (0, authMiddleware_1.requireRole)("admin", "accounts", "driver"), driver_1.getDriverSummary);
+router.post("/", (0, authMiddleware_1.requireRole)("admin", "accounts"), driver_1.createDriver);
+router.patch("/:id", (0, authMiddleware_1.requireRole)("admin", "accounts"), driver_1.updateDriver);
+router.delete("/:id", (0, authMiddleware_1.requireRole)("admin"), driver_1.deleteDriver);
+exports.default = router;

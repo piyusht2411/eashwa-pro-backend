@@ -16,6 +16,17 @@ import paymentRoutes from "./routes/payment";
 import miscellaneousRoutes from "./routes/miscellaneous";
 import adminDashboardRouter from "./routes/adminDashboard";
 import notificationRouter from "./routes/notification";
+import bootstrapRouter from "./routes/bootstrap";
+
+// ─── Transport Routes ─────────────────────────────────────────────────────────
+import transportUserRoutes from "./routes/transport/users";
+import transportDriverRoutes from "./routes/transport/drivers";
+import transportVisitRoutes from "./routes/transport/visits";
+import transportExpenseRoutes from "./routes/transport/expenses";
+import transportDashboardRoutes from "./routes/transport/dashboard";
+import transportReportRoutes from "./routes/transport/reports";
+
+import { authenticateToken, requirePortal } from "./middleware/authMiddleware";
 
 dotenv.config();
 
@@ -25,6 +36,7 @@ declare global {
     interface Request {
       userId?: string;
       userRole?: string;
+      userPortal?: "production" | "transport";
     }
   }
 }
@@ -57,6 +69,8 @@ const corsOptions = {
     "https://eashwastock.in",
     "https://www.eashwastock.in",
     "https://dummy-phi-eight.vercel.app",
+    "https://eashwa-transport.vercel.app",
+    "https://www.eashwa-transport.vercel.app",
     "http://localhost:8081"
   ],
   credentials: true,
@@ -70,14 +84,39 @@ app.use(morgan("dev"));
 app.use(cookieParser());
 
 // ─── API Routes ───────────────────────────────────────────────────────────────
+app.use("/api/setup", bootstrapRouter);
 app.use("/api/user", userRoutes);
-app.use("/api/containers", containerRoutes);
-app.use("/api/production-logs", productionLogRoutes);
-app.use("/api/pdi", pdiVerificationRoutes);
-app.use("/api/payments", paymentRoutes);
-app.use("/api/miscellaneous", miscellaneousRoutes);
-app.use("/api/admin", adminDashboardRouter);
+app.use("/api/auth", userRoutes); // alias for transport auth endpoints (/api/auth/login, /api/auth/me, etc.)
+// Production resources must not be accessible to a Transport account that
+// happens to share the same role name (for example, "admin").
+const productionAccess = [authenticateToken, requirePortal("production")];
+app.use("/api/containers", ...productionAccess, containerRoutes);
+app.use("/api/production-logs", ...productionAccess, productionLogRoutes);
+app.use("/api/pdi", ...productionAccess, pdiVerificationRoutes);
+app.use("/api/payments", ...productionAccess, paymentRoutes);
+app.use("/api/miscellaneous", ...productionAccess, miscellaneousRoutes);
+app.use("/api/admin", ...productionAccess, adminDashboardRouter);
+// Notifications are isolated by recipient ID in the controller and are shared
+// by both portals.
 app.use("/api/notifications", notificationRouter);
+
+// ─── Transport API Routes ─────────────────────────────────────────────────────
+const transportAccess = [authenticateToken, requirePortal("transport")];
+app.use("/api/transport/users", ...transportAccess, transportUserRoutes);
+app.use("/api/transport/drivers", ...transportAccess, transportDriverRoutes);
+app.use("/api/transport/visits", ...transportAccess, transportVisitRoutes);
+app.use("/api/transport/expenses", ...transportAccess, transportExpenseRoutes);
+app.use("/api/transport/dashboard", ...transportAccess, transportDashboardRoutes);
+app.use("/api/transport/reports", ...transportAccess, transportReportRoutes);
+
+// Compatibility direct mounts for Transport frontend
+app.use("/api/users", ...transportAccess, transportUserRoutes);
+app.use("/api/drivers", ...transportAccess, transportDriverRoutes);
+app.use("/api/visits", ...transportAccess, transportVisitRoutes);
+app.use("/api/expenses", ...transportAccess, transportExpenseRoutes);
+app.use("/api/dashboard", ...transportAccess, transportDashboardRoutes);
+app.use("/api/reports", ...transportAccess, transportReportRoutes);
+
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 app.get("/", (req: Request, res: Response) => {

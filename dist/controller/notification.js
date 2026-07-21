@@ -12,7 +12,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.markAllRead = exports.getMyNotifications = void 0;
+exports.deleteNotification = exports.markAsRead = exports.markAllRead = exports.getMyNotifications = void 0;
 const notification_1 = __importDefault(require("../model/notification"));
 const date_1 = require("../utils/date");
 const getPagination = (query) => {
@@ -66,3 +66,30 @@ const markAllRead = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
     }
 });
 exports.markAllRead = markAllRead;
+const markAsRead = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const notification = yield notification_1.default.findOneAndUpdate({ _id: req.params.id, recipient: req.userId }, { $set: { isRead: true } }, { new: true });
+        if (!notification)
+            return res.status(404).json({ message: "Notification not found" });
+        return res.status(200).json({ message: "Marked as read", notification: (0, date_1.istify)(notification) });
+    }
+    catch (err) {
+        return res.status(500).json({ message: err.message });
+    }
+});
+exports.markAsRead = markAsRead;
+const deleteNotification = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const notification = yield notification_1.default.findOneAndDelete({
+            _id: req.params.id,
+            recipient: req.userId,
+        });
+        if (!notification)
+            return res.status(404).json({ message: "Notification not found" });
+        return res.status(200).json({ message: "Notification deleted" });
+    }
+    catch (err) {
+        return res.status(500).json({ message: err.message });
+    }
+});
+exports.deleteNotification = deleteNotification;

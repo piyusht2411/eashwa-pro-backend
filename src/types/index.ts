@@ -1,7 +1,16 @@
-import { Types } from "mongoose";
+import { Document, Types } from "mongoose";
+
+// ─── Portal ───────────────────────────────────────────────────────────────────
+export type Portal = "production" | "transport";
 
 // ─── Roles ───────────────────────────────────────────────────────────────────
-export type Role = "admin" | "team" | "pdi";
+// Production roles: admin | team | pdi
+// Transport roles:  admin | accounts | driver
+export type Role = "admin" | "team" | "pdi" | "accounts" | "driver";
+
+// ─── Transport Types ──────────────────────────────────────────────────────────
+export type PaidBy = "driver" | "company";
+export type ExpenseStatus = "pending" | "approved" | "rejected" | "auto_approved";
 
 // ─── User ────────────────────────────────────────────────────────────────────
 export interface IUser {
@@ -11,9 +20,11 @@ export interface IUser {
   password: string;
   passwordResetToken: string;
   tokenExpire?: Date | null;
+  portal: Portal;
   role: Role;
   phone?: string;
   fcmToken?: string | null;
+  isActive: boolean;
 }
 
 // ─── Container (Job assigned by Admin) ───────────────────────────────────────
@@ -81,3 +92,74 @@ export interface IMiscellaneous {
   note?: string;                    // optional description
   createdBy: Types.ObjectId;        // ref → User (role: admin)
 }
+
+// ─── Driver (Transport) ───────────────────────────────────────────────────────
+export interface IDriver extends Document {
+  _id: Types.ObjectId;
+  name: string;
+  vehicleNumber: string;
+  userId: Types.ObjectId | null;    // optional link to User account for login
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// ─── Visit (Transport) ────────────────────────────────────────────────────────
+export interface IVisit extends Document {
+  _id: Types.ObjectId;
+  driver: Types.ObjectId;
+  vehicleNumber: string;
+  destination: string;
+  startDate: Date;
+  endDate: Date;
+  totalDays: number;
+  quantity: number;
+  billNumber: string;
+  distance: number;
+  createdBy: Types.ObjectId;
+  updatedBy: Types.ObjectId | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// ─── Expense Sub-Document (Transport) ─────────────────────────────────────────
+export interface IExpenseItem {
+  amount: number;
+  paidBy: PaidBy;
+  status: ExpenseStatus;
+  approvedBy: Types.ObjectId | null;
+  rejectedBy: Types.ObjectId | null;
+  rejectionRemark: string;
+  approvedAt: Date | null;
+  description?: string;
+}
+
+// ─── Expense (Transport) ──────────────────────────────────────────────────────
+export interface IExpense extends Document {
+  _id: Types.ObjectId;
+  visit: Types.ObjectId;
+  driver: Types.ObjectId;
+  food: IExpenseItem;
+  cng: IExpenseItem;
+  other: IExpenseItem & { description: string };
+  totalExpense: number;
+  pendingReimbursement: number;
+  approvedReimbursement: number;
+  rejectedAmount: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// ─── Notification ─────────────────────────────────────────────────────────────
+export interface INotification extends Document {
+  _id: Types.ObjectId;
+  recipient: Types.ObjectId;
+  type: string;
+  title: string;
+  body: string;
+  data: Record<string, string>;
+  isRead: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+

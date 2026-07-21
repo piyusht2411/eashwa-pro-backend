@@ -14,20 +14,29 @@ const getPagination = (query: Request["query"]) => {
   return { page, limit, skip };
 };
 
-// ─── Register / Create User-Team ─────────────────────────────────────────────
+// ─── Register / Create User ───────────────────────────────────────────────────
 export const register = async (req: Request, res: Response) => {
   try {
-    const { name, email, password, role, phone } = req.body;
+    const { name, email, password, role, phone, portal } = req.body;
     if (!name || !email || !password || !role) {
       return res.status(400).json({ message: "name, email, password and role are required" });
     }
-    const allowed = ["admin", "team", "pdi"];
+
+    const resolvedPortal = portal || "production";
+    const productionRoles = ["admin", "team", "pdi"];
+    const transportRoles = ["admin", "accounts", "driver"];
+    const allowed = resolvedPortal === "transport" ? transportRoles : productionRoles;
+
     if (!allowed.includes(role)) {
-      return res.status(400).json({ message: "Role must be admin | team | pdi" });
+      return res.status(400).json({
+        message: resolvedPortal === "transport"
+          ? "Role must be admin | accounts | driver"
+          : "Role must be admin | team | pdi",
+      });
     }
 
-    if (role === "pdi") {
-      const existingPdi = await User.findOne({ role: "pdi" });
+    if (resolvedPortal === "production" && role === "pdi") {
+      const existingPdi = await User.findOne({ role: "pdi", portal: "production" });
       if (existingPdi) {
         return res.status(409).json({ message: "PDI team already exists" });
       }
@@ -37,10 +46,10 @@ export const register = async (req: Request, res: Response) => {
     if (exists) {
       return res.status(409).json({ message: "Email already registered" });
     }
-    const user = await User.create({ name, email, password, role, phone });
+    const user = await User.create({ name, email, password, role, phone, portal: resolvedPortal });
     return res.status(201).json({
       message: "User created successfully",
-      user: { _id: user._id, name: user.name, email: user.email, role: user.role },
+      user: { _id: user._id, name: user.name, email: user.email, role: user.role, portal: user.portal },
     });
   } catch (err: any) {
     return res.status(500).json({ message: err.message });
@@ -54,22 +63,27 @@ export const login = async (req: Request, res: Response) => {
     if (!email || !password) {
       return res.status(400).json({ message: "email and password are required" });
     }
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email: email.toLowerCase().trim() });
     if (!user) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
+
+    if (!user.isActive) {
+      return res.status(403).json({ message: "Account is deactivated. Contact admin." });
+    }
+
     const match = await bcrypt.compare(password, user.password);
     if (!match) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
     const authToken = jwt.sign(
-      { userId: user._id, role: user.role },
+      { userId: user._id, role: user.role, portal: user.portal },
       process.env.JWT_SECRET_KEY || "",
       { expiresIn: "30d" }
     );
     const refreshToken = jwt.sign(
-      { userId: user._id, role: user.role },
+      { userId: user._id, role: user.role, portal: user.portal },
       process.env.JWT_REFRESH_SECRET_KEY || "",
       { expiresIn: "60d" }
     );
@@ -88,6 +102,7 @@ export const login = async (req: Request, res: Response) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        portal: user.portal,
         phone: user.phone,
       },
     });
@@ -167,19 +182,25 @@ export const getUserById = async (req: Request, res: Response) => {
 export const updateUser = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { name, email, password, role, phone } = req.body;
+    const { name, email, password, role, phone, isActive } = req.body;
 
     const user = await User.findById(id);
     if (!user) return res.status(404).json({ message: "User not found" });
 
     if (role !== undefined) {
-      const allowed = ["admin", "team", "pdi"];
+      const productionRoles = ["admin", "team", "pdi"];
+      const transportRoles = ["admin", "accounts", "driver"];
+      const allowed = user.portal === "transport" ? transportRoles : productionRoles;
       if (!allowed.includes(role)) {
-        return res.status(400).json({ message: "Role must be admin | team | pdi" });
+        return res.status(400).json({
+          message: user.portal === "transport"
+            ? "Role must be admin | accounts | driver"
+            : "Role must be admin | team | pdi",
+        });
       }
 
-      if (role === "pdi") {
-        const existingPdi = await User.findOne({ role: "pdi", _id: { $ne: id } });
+      if (user.portal === "production" && role === "pdi") {
+        const existingPdi = await User.findOne({ role: "pdi", portal: "production", _id: { $ne: id } });
         if (existingPdi) {
           return res.status(409).json({ message: "PDI team already exists" });
         }
@@ -198,6 +219,7 @@ export const updateUser = async (req: Request, res: Response) => {
     if (name !== undefined) user.name = name;
     if (phone !== undefined) user.phone = phone;
     if (password !== undefined) user.password = password;
+    if (isActive !== undefined) user.isActive = isActive;
 
     await user.save();
 
@@ -208,7 +230,9 @@ export const updateUser = async (req: Request, res: Response) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        portal: user.portal,
         phone: user.phone,
+        isActive: user.isActive,
       },
     });
   } catch (err: any) {

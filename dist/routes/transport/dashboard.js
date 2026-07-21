@@ -1,0 +1,11 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const dashboard_1 = require("../../controller/transport/dashboard");
+const authMiddleware_1 = require("../../middleware/authMiddleware");
+const router = (0, express_1.Router)();
+router.use(authMiddleware_1.authenticateToken);
+router.get("/admin", (0, authMiddleware_1.requireRole)("admin"), dashboard_1.getAdminDashboard);
+router.get("/accounts", (0, authMiddleware_1.requireRole)("admin", "accounts"), dashboard_1.getAccountsDashboard);
+router.get("/driver/:driverId", (0, authMiddleware_1.requireRole)("admin", "accounts", "driver"), dashboard_1.getDriverDashboard);
+exports.default = router;
