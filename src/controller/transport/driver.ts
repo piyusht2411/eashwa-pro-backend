@@ -10,7 +10,9 @@ export const createDriver = async (req: Request, res: Response) => {
     const { name, vehicleNumber, userId } = req.body;
 
     if (!name || !vehicleNumber) {
-      return res.status(400).json({ message: "name and vehicleNumber are required" });
+      return res
+        .status(400)
+        .json({ message: "name and vehicleNumber are required" });
     }
 
     const driver = await Driver.create({
@@ -34,14 +36,28 @@ export const getAllDrivers = async (req: Request, res: Response) => {
     const { search, isActive } = req.query;
     const { page, limit, skip } = getPagination(req.query);
 
-    const filter: any = {};
-    if (isActive !== undefined) filter.isActive = isActive === "true";
-    if (search) {
-      filter.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { vehicleNumber: { $regex: search, $options: "i" } },
-      ];
+    const filters: any[] = [];
+    if (isActive !== undefined) {
+      if (isActive === "true") {
+        filters.push({
+          $or: [{ isActive: true }, { isActive: { $exists: false } }],
+        });
+      } else {
+        filters.push({ isActive: false });
+      }
     }
+
+    if (search) {
+      filters.push({
+        $or: [
+          { name: { $regex: search, $options: "i" } },
+          { vehicleNumber: { $regex: search, $options: "i" } },
+        ],
+      });
+    }
+
+    const filter = filters.length > 0 ? { $and: filters } : {};
+    console.log("getAllDrivers filter", filter, "page", page, "limit", limit);
 
     const [drivers, total] = await Promise.all([
       Driver.find(filter)
@@ -51,6 +67,8 @@ export const getAllDrivers = async (req: Request, res: Response) => {
         .limit(limit),
       Driver.countDocuments(filter),
     ]);
+
+    console.log("getAllDrivers result", drivers.length, "total", total);
 
     return res.status(200).json({
       drivers,
@@ -64,7 +82,10 @@ export const getAllDrivers = async (req: Request, res: Response) => {
 // ─── Get Driver By ID ─────────────────────────────────────────────────────────
 export const getDriverById = async (req: Request, res: Response) => {
   try {
-    const driver = await Driver.findById(req.params.id).populate("userId", "email role");
+    const driver = await Driver.findById(req.params.id).populate(
+      "userId",
+      "email role",
+    );
     if (!driver) return res.status(404).json({ message: "Driver not found" });
     return res.status(200).json({ driver });
   } catch (err: any) {
@@ -142,13 +163,16 @@ export const updateDriver = async (req: Request, res: Response) => {
     if (!driver) return res.status(404).json({ message: "Driver not found" });
 
     if (name !== undefined) driver.name = name.trim();
-    if (vehicleNumber !== undefined) driver.vehicleNumber = vehicleNumber.trim().toUpperCase();
+    if (vehicleNumber !== undefined)
+      driver.vehicleNumber = vehicleNumber.trim().toUpperCase();
     if (userId !== undefined) driver.userId = userId;
     if (isActive !== undefined) driver.isActive = isActive;
 
     await driver.save();
 
-    return res.status(200).json({ message: "Driver updated successfully", driver });
+    return res
+      .status(200)
+      .json({ message: "Driver updated successfully", driver });
   } catch (err: any) {
     return res.status(500).json({ message: err.message });
   }
@@ -165,7 +189,8 @@ export const deleteDriver = async (req: Request, res: Response) => {
     const linkedVisit = await Visit.findOne({ driver: id }).select("_id");
     if (linkedVisit) {
       return res.status(400).json({
-        message: "Cannot delete driver with existing visits. Deactivate instead.",
+        message:
+          "Cannot delete driver with existing visits. Deactivate instead.",
       });
     }
 

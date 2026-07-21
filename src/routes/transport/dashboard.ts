@@ -3,6 +3,7 @@ import {
   getAdminDashboard,
   getAccountsDashboard,
   getDriverDashboard,
+  getMyDriverDashboard,
 } from "../../controller/transport/dashboard";
 import { authenticateToken, requireRole } from "../../middleware/authMiddleware";
 
@@ -12,6 +13,7 @@ router.use(authenticateToken);
 
 router.get("/admin", requireRole("admin"), getAdminDashboard);
 router.get("/accounts", requireRole("admin", "accounts"), getAccountsDashboard);
+router.get("/driver/me", requireRole("driver"), getMyDriverDashboard);
 router.get("/driver/:driverId", requireRole("admin", "accounts", "driver"), getDriverDashboard);
 
 export default router;

@@ -192,3 +192,12 @@ export const getDriverDashboard = async (req: Request, res: Response) => {
     return res.status(500).json({ message: err.message });
   }
 };
+
+// Driver-safe dashboard: resolve the Driver record from the authenticated user.
+// A driver must never supply another driver's ID.
+export const getMyDriverDashboard = async (req: Request, res: Response) => {
+  const driver = await Driver.findOne({ userId: req.userId, isActive: true }).select("_id");
+  if (!driver) return res.status(404).json({ message: "No active driver profile is linked to this account" });
+  req.params.driverId = String(driver._id);
+  return getDriverDashboard(req, res);
+};

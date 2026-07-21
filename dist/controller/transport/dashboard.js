@@ -12,7 +12,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getDriverDashboard = exports.getAccountsDashboard = exports.getAdminDashboard = void 0;
+exports.getMyDriverDashboard = exports.getDriverDashboard = exports.getAccountsDashboard = exports.getAdminDashboard = void 0;
 const driver_1 = __importDefault(require("../../model/driver"));
 const visit_1 = __importDefault(require("../../model/visit"));
 const expense_1 = __importDefault(require("../../model/expense"));
@@ -187,3 +187,13 @@ const getDriverDashboard = (req, res) => __awaiter(void 0, void 0, void 0, funct
     }
 });
 exports.getDriverDashboard = getDriverDashboard;
+// Driver-safe dashboard: resolve the Driver record from the authenticated user.
+// A driver must never supply another driver's ID.
+const getMyDriverDashboard = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    const driver = yield driver_1.default.findOne({ userId: req.userId, isActive: true }).select("_id");
+    if (!driver)
+        return res.status(404).json({ message: "No active driver profile is linked to this account" });
+    req.params.driverId = String(driver._id);
+    return (0, exports.getDriverDashboard)(req, res);
+});
+exports.getMyDriverDashboard = getMyDriverDashboard;

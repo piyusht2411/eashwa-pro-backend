@@ -22,7 +22,9 @@ const createDriver = (req, res) => __awaiter(void 0, void 0, void 0, function* (
     try {
         const { name, vehicleNumber, userId } = req.body;
         if (!name || !vehicleNumber) {
-            return res.status(400).json({ message: "name and vehicleNumber are required" });
+            return res
+                .status(400)
+                .json({ message: "name and vehicleNumber are required" });
         }
         const driver = yield driver_1.default.create({
             name: name.trim(),
@@ -44,15 +46,27 @@ const getAllDrivers = (req, res) => __awaiter(void 0, void 0, void 0, function* 
     try {
         const { search, isActive } = req.query;
         const { page, limit, skip } = (0, helpers_1.getPagination)(req.query);
-        const filter = {};
-        if (isActive !== undefined)
-            filter.isActive = isActive === "true";
-        if (search) {
-            filter.$or = [
-                { name: { $regex: search, $options: "i" } },
-                { vehicleNumber: { $regex: search, $options: "i" } },
-            ];
+        const filters = [];
+        if (isActive !== undefined) {
+            if (isActive === "true") {
+                filters.push({
+                    $or: [{ isActive: true }, { isActive: { $exists: false } }],
+                });
+            }
+            else {
+                filters.push({ isActive: false });
+            }
         }
+        if (search) {
+            filters.push({
+                $or: [
+                    { name: { $regex: search, $options: "i" } },
+                    { vehicleNumber: { $regex: search, $options: "i" } },
+                ],
+            });
+        }
+        const filter = filters.length > 0 ? { $and: filters } : {};
+        console.log("getAllDrivers filter", filter, "page", page, "limit", limit);
         const [drivers, total] = yield Promise.all([
             driver_1.default.find(filter)
                 .populate("userId", "email role")
@@ -61,6 +75,7 @@ const getAllDrivers = (req, res) => __awaiter(void 0, void 0, void 0, function* 
                 .limit(limit),
             driver_1.default.countDocuments(filter),
         ]);
+        console.log("getAllDrivers result", drivers.length, "total", total);
         return res.status(200).json({
             drivers,
             pagination: (0, helpers_1.buildPaginationMeta)(page, limit, total),
@@ -159,7 +174,9 @@ const updateDriver = (req, res) => __awaiter(void 0, void 0, void 0, function* (
         if (isActive !== undefined)
             driver.isActive = isActive;
         yield driver.save();
-        return res.status(200).json({ message: "Driver updated successfully", driver });
+        return res
+            .status(200)
+            .json({ message: "Driver updated successfully", driver });
     }
     catch (err) {
         return res.status(500).json({ message: err.message });

@@ -7,5 +7,6 @@ const router = (0, express_1.Router)();
 router.use(authMiddleware_1.authenticateToken);
 router.get("/admin", (0, authMiddleware_1.requireRole)("admin"), dashboard_1.getAdminDashboard);
 router.get("/accounts", (0, authMiddleware_1.requireRole)("admin", "accounts"), dashboard_1.getAccountsDashboard);
+router.get("/driver/me", (0, authMiddleware_1.requireRole)("driver"), dashboard_1.getMyDriverDashboard);
 router.get("/driver/:driverId", (0, authMiddleware_1.requireRole)("admin", "accounts", "driver"), dashboard_1.getDriverDashboard);
 exports.default = router;
