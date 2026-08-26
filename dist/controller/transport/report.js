@@ -17,6 +17,7 @@ const exceljs_1 = __importDefault(require("exceljs"));
 const visit_1 = __importDefault(require("../../model/visit"));
 const expense_1 = __importDefault(require("../../model/expense"));
 const helpers_1 = require("../../utils/helpers");
+const expenseTotals_1 = require("../../utils/expenseTotals");
 // ─── Export Excel Report ──────────────────────────────────────────────────────
 const exportExcel = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
@@ -62,6 +63,7 @@ const exportExcel = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
             { header: "Other Paid By", key: "otherPaidBy", width: 14 },
             { header: "Other Status", key: "otherStatus", width: 14 },
             { header: "Total Expense (₹)", key: "totalExpense", width: 18 },
+            { header: "Awaiting Approval (₹)", key: "pendingExpense", width: 20 },
             { header: "Pending Reimb. (₹)", key: "pendingReimb", width: 18 },
             { header: "Approved Reimb. (₹)", key: "approvedReimb", width: 20 },
             { header: "Rejected Amt. (₹)", key: "rejectedAmt", width: 18 },
@@ -78,9 +80,12 @@ const exportExcel = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
         });
         headerRow.height = 30;
         visits.forEach((visit, index) => {
-            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s;
+            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o;
             const expense = expenseMap.get(visit._id.toString());
             const driver = visit.driver;
+            // Recompute rather than trust stored fields, so rows written before the
+            // "approved only" rule still report correctly.
+            const totals = (0, expenseTotals_1.computeExpenseTotals)(expense);
             const row = sheet.addRow({
                 driverName: (driver === null || driver === void 0 ? void 0 : driver.name) || "",
                 vehicleNumber: visit.vehicleNumber,
@@ -101,10 +106,11 @@ const exportExcel = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
                 otherDesc: ((_l = expense === null || expense === void 0 ? void 0 : expense.other) === null || _l === void 0 ? void 0 : _l.description) || "",
                 otherPaidBy: formatPaidBy((_m = expense === null || expense === void 0 ? void 0 : expense.other) === null || _m === void 0 ? void 0 : _m.paidBy),
                 otherStatus: formatStatus((_o = expense === null || expense === void 0 ? void 0 : expense.other) === null || _o === void 0 ? void 0 : _o.status),
-                totalExpense: (_p = expense === null || expense === void 0 ? void 0 : expense.totalExpense) !== null && _p !== void 0 ? _p : 0,
-                pendingReimb: (_q = expense === null || expense === void 0 ? void 0 : expense.pendingReimbursement) !== null && _q !== void 0 ? _q : 0,
-                approvedReimb: (_r = expense === null || expense === void 0 ? void 0 : expense.approvedReimbursement) !== null && _r !== void 0 ? _r : 0,
-                rejectedAmt: (_s = expense === null || expense === void 0 ? void 0 : expense.rejectedAmount) !== null && _s !== void 0 ? _s : 0,
+                totalExpense: totals.totalExpense,
+                pendingExpense: totals.pendingExpense,
+                pendingReimb: totals.pendingReimbursement,
+                approvedReimb: totals.approvedReimbursement,
+                rejectedAmt: totals.rejectedAmount,
             });
             const bgColor = index % 2 === 0 ? "FFFAFAFA" : "FFE8F4FD";
             row.eachCell((cell) => {
@@ -119,6 +125,15 @@ const exportExcel = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
             });
         });
         const allExpenses = expenses;
+        const grandTotals = allExpenses
+            .map((e) => (0, expenseTotals_1.computeExpenseTotals)(e))
+            .reduce((acc, t) => ({
+            totalExpense: acc.totalExpense + t.totalExpense,
+            pendingExpense: acc.pendingExpense + t.pendingExpense,
+            pendingReimbursement: acc.pendingReimbursement + t.pendingReimbursement,
+            approvedReimbursement: acc.approvedReimbursement + t.approvedReimbursement,
+            rejectedAmount: acc.rejectedAmount + t.rejectedAmount,
+        }), (0, expenseTotals_1.emptyExpenseTotals)());
         const sumRow = sheet.addRow({
             driverName: "TOTAL",
             totalDays: visits.reduce((s, v) => s + (v.totalDays || 0), 0),
@@ -126,10 +141,11 @@ const exportExcel = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
             food: allExpenses.reduce((s, e) => { var _a; return s + (((_a = e.food) === null || _a === void 0 ? void 0 : _a.amount) || 0); }, 0),
             cng: allExpenses.reduce((s, e) => { var _a; return s + (((_a = e.cng) === null || _a === void 0 ? void 0 : _a.amount) || 0); }, 0),
             other: allExpenses.reduce((s, e) => { var _a; return s + (((_a = e.other) === null || _a === void 0 ? void 0 : _a.amount) || 0); }, 0),
-            totalExpense: allExpenses.reduce((s, e) => s + (e.totalExpense || 0), 0),
-            pendingReimb: allExpenses.reduce((s, e) => s + (e.pendingReimbursement || 0), 0),
-            approvedReimb: allExpenses.reduce((s, e) => s + (e.approvedReimbursement || 0), 0),
-            rejectedAmt: allExpenses.reduce((s, e) => s + (e.rejectedAmount || 0), 0),
+            totalExpense: grandTotals.totalExpense,
+            pendingExpense: grandTotals.pendingExpense,
+            pendingReimb: grandTotals.pendingReimbursement,
+            approvedReimb: grandTotals.approvedReimbursement,
+            rejectedAmt: grandTotals.rejectedAmount,
         });
         sumRow.eachCell((cell) => {
             cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1A3C5E" } };
@@ -162,14 +178,23 @@ const getVisitReport = (req, res) => __awaiter(void 0, void 0, void 0, function*
         const visitIds = visits.map((v) => v._id);
         const expenses = yield expense_1.default.find({ visit: { $in: visitIds } }).lean();
         const expenseMap = new Map(expenses.map((e) => [e.visit.toString(), e]));
-        const report = visits.map((visit) => (Object.assign(Object.assign({}, visit), { expense: expenseMap.get(visit._id.toString()) || null })));
-        const totals = {
-            totalVisits: visits.length,
-            totalDistance: visits.reduce((s, v) => s + (v.distance || 0), 0),
-            totalExpense: expenses.reduce((s, e) => s + (e.totalExpense || 0), 0),
-            pendingReimbursement: expenses.reduce((s, e) => s + (e.pendingReimbursement || 0), 0),
-            approvedReimbursement: expenses.reduce((s, e) => s + (e.approvedReimbursement || 0), 0),
-        };
+        const report = visits.map((visit) => {
+            const expense = expenseMap.get(visit._id.toString());
+            return Object.assign(Object.assign({}, visit), { 
+                // Overlay freshly computed totals so a row never shows an unapproved
+                // amount that was stored before the "approved only" rule.
+                expense: expense ? Object.assign(Object.assign({}, expense), (0, expenseTotals_1.computeExpenseTotals)(expense)) : null });
+        });
+        const rollup = expenses
+            .map((e) => (0, expenseTotals_1.computeExpenseTotals)(e))
+            .reduce((acc, t) => ({
+            totalExpense: acc.totalExpense + t.totalExpense,
+            pendingExpense: acc.pendingExpense + t.pendingExpense,
+            pendingReimbursement: acc.pendingReimbursement + t.pendingReimbursement,
+            approvedReimbursement: acc.approvedReimbursement + t.approvedReimbursement,
+            rejectedAmount: acc.rejectedAmount + t.rejectedAmount,
+        }), (0, expenseTotals_1.emptyExpenseTotals)());
+        const totals = Object.assign({ totalVisits: visits.length, totalDistance: visits.reduce((s, v) => s + (v.distance || 0), 0) }, rollup);
         return res.status(200).json({ report, totals });
     }
     catch (err) {

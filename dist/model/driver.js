@@ -7,9 +7,10 @@ const driverSchema = new mongoose_1.Schema({
         required: true,
         trim: true,
     },
+    // Optional — a driver may be registered before a vehicle is assigned.
     vehicleNumber: {
         type: String,
-        required: true,
+        default: "",
         trim: true,
         uppercase: true,
     },

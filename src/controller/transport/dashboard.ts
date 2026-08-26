@@ -3,6 +3,12 @@ import Driver from "../../model/driver";
 import Visit from "../../model/visit";
 import Expense from "../../model/expense";
 import { buildDateFilter } from "../../utils/helpers";
+import { isDriverRole, resolveDriverScope } from "../../utils/driverScope";
+import {
+  expenseTotalsStage,
+  expenseTotalsAccumulators,
+  emptyExpenseTotals,
+} from "../../utils/expenseTotals";
 
 // ─── Admin Dashboard ──────────────────────────────────────────────────────────
 export const getAdminDashboard = async (req: Request, res: Response) => {
@@ -22,14 +28,8 @@ export const getAdminDashboard = async (req: Request, res: Response) => {
       Visit.countDocuments(visitFilter),
 
       Expense.aggregate([
-        {
-          $group: {
-            _id: null,
-            totalExpense: { $sum: "$totalExpense" },
-            pendingReimbursement: { $sum: "$pendingReimbursement" },
-            approvedReimbursement: { $sum: "$approvedReimbursement" },
-          },
-        },
+        expenseTotalsStage,
+        { $group: { _id: null, ...expenseTotalsAccumulators } },
       ]),
 
       Expense.countDocuments({
@@ -64,11 +64,7 @@ export const getAdminDashboard = async (req: Request, res: Response) => {
       { $group: { _id: null, totalDistance: { $sum: "$distance" } } },
     ]);
 
-    const stats = expenseStats[0] || {
-      totalExpense: 0,
-      pendingReimbursement: 0,
-      approvedReimbursement: 0,
-    };
+    const stats = expenseStats[0] || emptyExpenseTotals();
 
     return res.status(200).json({
       stats: {
@@ -76,6 +72,7 @@ export const getAdminDashboard = async (req: Request, res: Response) => {
         totalVisits,
         totalDistance: distanceStats?.totalDistance ?? 0,
         totalExpense: stats.totalExpense,
+        pendingExpense: stats.pendingExpense,
         pendingReimbursements: stats.pendingReimbursement,
         approvedReimbursements: stats.approvedReimbursement,
         pendingApprovals,
@@ -112,7 +109,8 @@ export const getAccountsDashboard = async (req: Request, res: Response) => {
     ]);
 
     const [expenseStats] = await Expense.aggregate([
-      { $group: { _id: null, totalExpense: { $sum: "$totalExpense" } } },
+      expenseTotalsStage,
+      { $group: { _id: null, ...expenseTotalsAccumulators } },
     ]);
 
     return res.status(200).json({
@@ -120,6 +118,9 @@ export const getAccountsDashboard = async (req: Request, res: Response) => {
         totalDrivers,
         totalVisits,
         totalExpense: expenseStats?.totalExpense ?? 0,
+        pendingExpense: expenseStats?.pendingExpense ?? 0,
+        pendingReimbursements: expenseStats?.pendingReimbursement ?? 0,
+        approvedReimbursements: expenseStats?.approvedReimbursement ?? 0,
         pendingApprovals,
       },
       recentVisits,
@@ -134,6 +135,14 @@ export const getDriverDashboard = async (req: Request, res: Response) => {
   try {
     const { driverId } = req.params;
     const dateFilter = buildDateFilter(req.query);
+
+    // A driver may only read their own dashboard, whichever id they ask for.
+    if (isDriverRole(req)) {
+      const scope = await resolveDriverScope(req, driverId);
+      if (scope.forbidden) {
+        return res.status(403).json({ message: scope.message });
+      }
+    }
 
     const driver = await Driver.findById(driverId);
     if (!driver) return res.status(404).json({ message: "Driver not found" });
@@ -154,14 +163,8 @@ export const getDriverDashboard = async (req: Request, res: Response) => {
 
       Expense.aggregate([
         { $match: { driver: driver._id } },
-        {
-          $group: {
-            _id: "$driver",
-            totalExpense: { $sum: "$totalExpense" },
-            approvedReimbursement: { $sum: "$approvedReimbursement" },
-            pendingReimbursement: { $sum: "$pendingReimbursement" },
-          },
-        },
+        expenseTotalsStage,
+        { $group: { _id: "$driver", ...expenseTotalsAccumulators } },
       ]),
     ]);
 
@@ -171,11 +174,7 @@ export const getDriverDashboard = async (req: Request, res: Response) => {
       .lean();
 
     const vStats = visits[0] || { totalVisits: 0, totalDistance: 0 };
-    const eStats = expenseStats[0] || {
-      totalExpense: 0,
-      approvedReimbursement: 0,
-      pendingReimbursement: 0,
-    };
+    const eStats = expenseStats[0] || emptyExpenseTotals();
 
     return res.status(200).json({
       driver,
@@ -183,6 +182,7 @@ export const getDriverDashboard = async (req: Request, res: Response) => {
         totalVisits: vStats.totalVisits,
         totalDistance: vStats.totalDistance,
         totalExpense: eStats.totalExpense,
+        pendingExpense: eStats.pendingExpense,
         approvedReimbursements: eStats.approvedReimbursement,
         pendingBalance: eStats.pendingReimbursement,
       },

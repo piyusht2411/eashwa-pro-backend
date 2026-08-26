@@ -97,7 +97,7 @@ export interface IMiscellaneous {
 export interface IDriver extends Document {
   _id: Types.ObjectId;
   name: string;
-  vehicleNumber: string;
+  vehicleNumber?: string;           // optional — may be unassigned at creation time
   userId: Types.ObjectId | null;    // optional link to User account for login
   isActive: boolean;
   createdAt: Date;
@@ -143,6 +143,7 @@ export interface IExpense extends Document {
   cng: IExpenseItem;
   other: IExpenseItem & { description: string };
   totalExpense: number;
+  pendingExpense: number;
   pendingReimbursement: number;
   approvedReimbursement: number;
   rejectedAmount: number;

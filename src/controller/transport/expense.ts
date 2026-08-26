@@ -5,6 +5,7 @@ import Driver from "../../model/driver";
 import User from "../../model/user";
 import { sendPushNotification, sendPushNotificationToMany } from "../../utils/notify";
 import { maxFoodAllowance } from "../../utils/helpers";
+import { isDriverRole, resolveDriverScope } from "../../utils/driverScope";
 import { PaidBy } from "../../types";
 
 type ExpenseType = "food" | "cng" | "other";
@@ -74,6 +75,16 @@ export const upsertExpense = async (req: Request, res: Response) => {
 export const getExpenseByVisit = async (req: Request, res: Response) => {
   try {
     const { visitId } = req.params;
+
+    // A driver may only read expenses on their own visits.
+    if (isDriverRole(req)) {
+      const visit = await Visit.findById(visitId).select("driver");
+      if (!visit) return res.status(404).json({ message: "Visit not found" });
+      const scope = await resolveDriverScope(req, String(visit.driver));
+      if (scope.forbidden) {
+        return res.status(403).json({ message: scope.message });
+      }
+    }
 
     const expense = await Expense.findOne({ visit: visitId })
       .populate("food.approvedBy", "name")
@@ -234,12 +245,21 @@ function buildExpenseItem(data: any, type: string) {
 }
 
 function updateExpenseItem(item: any, data: any) {
+  const amountChanged =
+    data.amount !== undefined && Number(data.amount) !== Number(item.amount || 0);
+  const paidByChanged = data.paidBy !== undefined && data.paidBy !== item.paidBy;
+
   if (data.amount !== undefined) item.amount = data.amount;
-  if (data.paidBy !== undefined) {
-    item.paidBy = data.paidBy;
-    if (["pending", "auto_approved"].includes(item.status)) {
-      item.status = getInitialStatus(data.paidBy as PaidBy);
-    }
-  }
+  if (data.paidBy !== undefined) item.paidBy = data.paidBy;
   if (data.description !== undefined) item.description = data.description;
+
+  // Re-editing the figure invalidates any decision already taken on it —
+  // otherwise a changed amount would slip into the total without review.
+  if (amountChanged || paidByChanged) {
+    item.status = getInitialStatus(item.paidBy as PaidBy);
+    item.approvedBy = null;
+    item.approvedAt = null;
+    item.rejectedBy = null;
+    item.rejectionRemark = "";
+  }
 }

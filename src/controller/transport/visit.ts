@@ -5,6 +5,7 @@ import Driver from "../../model/driver";
 import User from "../../model/user";
 import { sendPushNotification, sendPushNotificationToMany } from "../../utils/notify";
 import { getPagination, buildPaginationMeta, buildDateFilter } from "../../utils/helpers";
+import { isDriverRole, resolveDriverScope } from "../../utils/driverScope";
 
 // ─── Create Visit ─────────────────────────────────────────────────────────────
 export const createVisit = async (req: Request, res: Response) => {
@@ -22,9 +23,17 @@ export const createVisit = async (req: Request, res: Response) => {
       return res.status(400).json({ message: "endDate cannot be before startDate" });
     }
 
+    // A driver may have no vehicle assigned, so the visit must carry one explicitly.
+    const resolvedVehicle = (vehicleNumber || driver.vehicleNumber || "").trim();
+    if (!resolvedVehicle) {
+      return res.status(400).json({
+        message: "vehicleNumber is required — this driver has no vehicle assigned",
+      });
+    }
+
     const visit = await Visit.create({
       driver: driverId,
-      vehicleNumber: vehicleNumber || driver.vehicleNumber,
+      vehicleNumber: resolvedVehicle,
       destination,
       startDate: new Date(startDate),
       endDate: new Date(endDate),
@@ -70,7 +79,17 @@ export const getAllVisits = async (req: Request, res: Response) => {
     const { page, limit, skip } = getPagination(req.query);
 
     const filter: any = { ...buildDateFilter(req.query) };
-    if (driverId) filter.driver = driverId;
+
+    // A driver only ever sees their own visits — their id overrides any query param.
+    if (isDriverRole(req)) {
+      const scope = await resolveDriverScope(req, driverId as string | undefined);
+      if (scope.forbidden) {
+        return res.status(403).json({ message: scope.message });
+      }
+      filter.driver = scope.driverId;
+    } else if (driverId) {
+      filter.driver = driverId;
+    }
     if (search) {
       filter.$or = [
         { destination: { $regex: search, $options: "i" } },
@@ -107,6 +126,15 @@ export const getVisitById = async (req: Request, res: Response) => {
       .populate("updatedBy", "name role");
 
     if (!visit) return res.status(404).json({ message: "Visit not found" });
+
+    // A driver may only open their own visits.
+    if (isDriverRole(req)) {
+      const visitDriverId = String((visit.driver as any)?._id ?? visit.driver);
+      const scope = await resolveDriverScope(req, visitDriverId);
+      if (scope.forbidden) {
+        return res.status(403).json({ message: scope.message });
+      }
+    }
 
     const expense = await Expense.findOne({ visit: visit._id })
       .populate("food.approvedBy", "name")

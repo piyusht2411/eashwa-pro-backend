@@ -3,21 +3,22 @@ import Driver from "../../model/driver";
 import Visit from "../../model/visit";
 import Expense from "../../model/expense";
 import { getPagination, buildPaginationMeta } from "../../utils/helpers";
+import { isDriverRole, resolveDriverScope } from "../../utils/driverScope";
+import { expenseTotalsStage, expenseTotalsAccumulators } from "../../utils/expenseTotals";
 
 // ─── Create Driver ────────────────────────────────────────────────────────────
 export const createDriver = async (req: Request, res: Response) => {
   try {
     const { name, vehicleNumber, userId } = req.body;
 
-    if (!name || !vehicleNumber) {
-      return res
-        .status(400)
-        .json({ message: "name and vehicleNumber are required" });
+    if (!name || !name.trim()) {
+      return res.status(400).json({ message: "name is required" });
     }
 
+    // vehicleNumber is optional — a driver can be added before a vehicle is assigned.
     const driver = await Driver.create({
       name: name.trim(),
-      vehicleNumber: vehicleNumber.trim().toUpperCase(),
+      vehicleNumber: vehicleNumber ? String(vehicleNumber).trim().toUpperCase() : "",
       userId: userId || null,
     });
 
@@ -82,6 +83,14 @@ export const getAllDrivers = async (req: Request, res: Response) => {
 // ─── Get Driver By ID ─────────────────────────────────────────────────────────
 export const getDriverById = async (req: Request, res: Response) => {
   try {
+    // A driver may only read their own profile.
+    if (isDriverRole(req)) {
+      const scope = await resolveDriverScope(req, req.params.id);
+      if (scope.forbidden) {
+        return res.status(403).json({ message: scope.message });
+      }
+    }
+
     const driver = await Driver.findById(req.params.id).populate(
       "userId",
       "email role",
@@ -99,6 +108,14 @@ export const getDriverSummary = async (req: Request, res: Response) => {
     const { id } = req.params;
     const { page, limit, skip } = getPagination(req.query);
 
+    // A driver may only read their own summary.
+    if (isDriverRole(req)) {
+      const scope = await resolveDriverScope(req, id);
+      if (scope.forbidden) {
+        return res.status(403).json({ message: scope.message });
+      }
+    }
+
     const driver = await Driver.findById(id);
     if (!driver) return res.status(404).json({ message: "Driver not found" });
 
@@ -115,15 +132,8 @@ export const getDriverSummary = async (req: Request, res: Response) => {
 
     const [expenseStats] = await Expense.aggregate([
       { $match: { driver: driver._id } },
-      {
-        $group: {
-          _id: "$driver",
-          totalExpense: { $sum: "$totalExpense" },
-          approvedReimbursement: { $sum: "$approvedReimbursement" },
-          pendingReimbursement: { $sum: "$pendingReimbursement" },
-          rejectedAmount: { $sum: "$rejectedAmount" },
-        },
-      },
+      expenseTotalsStage,
+      { $group: { _id: "$driver", ...expenseTotalsAccumulators } },
     ]);
 
     const [visits, totalVisits] = await Promise.all([
@@ -141,6 +151,7 @@ export const getDriverSummary = async (req: Request, res: Response) => {
         totalVisits: stats?.totalVisits ?? 0,
         totalDistance: stats?.totalDistance ?? 0,
         totalExpense: expenseStats?.totalExpense ?? 0,
+        pendingExpense: expenseStats?.pendingExpense ?? 0,
         approvedReimbursement: expenseStats?.approvedReimbursement ?? 0,
         pendingReimbursement: expenseStats?.pendingReimbursement ?? 0,
         rejectedAmount: expenseStats?.rejectedAmount ?? 0,
@@ -163,8 +174,9 @@ export const updateDriver = async (req: Request, res: Response) => {
     if (!driver) return res.status(404).json({ message: "Driver not found" });
 
     if (name !== undefined) driver.name = name.trim();
+    // Allow clearing the vehicle by sending "" / null.
     if (vehicleNumber !== undefined)
-      driver.vehicleNumber = vehicleNumber.trim().toUpperCase();
+      driver.vehicleNumber = vehicleNumber ? String(vehicleNumber).trim().toUpperCase() : "";
     if (userId !== undefined) driver.userId = userId;
     if (isActive !== undefined) driver.isActive = isActive;
 

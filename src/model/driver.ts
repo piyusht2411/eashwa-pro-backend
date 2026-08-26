@@ -8,9 +8,10 @@ const driverSchema = new Schema<IDriver>(
       required: true,
       trim: true,
     },
+    // Optional — a driver may be registered before a vehicle is assigned.
     vehicleNumber: {
       type: String,
-      required: true,
+      default: "",
       trim: true,
       uppercase: true,
     },

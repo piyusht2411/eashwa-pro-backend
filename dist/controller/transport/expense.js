@@ -42,6 +42,7 @@ const driver_1 = __importDefault(require("../../model/driver"));
 const user_1 = __importDefault(require("../../model/user"));
 const notify_1 = require("../../utils/notify");
 const helpers_1 = require("../../utils/helpers");
+const driverScope_1 = require("../../utils/driverScope");
 // ─── Create / Upsert Expense for a Visit ─────────────────────────────────────
 const upsertExpense = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
@@ -97,6 +98,16 @@ exports.upsertExpense = upsertExpense;
 const getExpenseByVisit = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { visitId } = req.params;
+        // A driver may only read expenses on their own visits.
+        if ((0, driverScope_1.isDriverRole)(req)) {
+            const visit = yield visit_1.default.findById(visitId).select("driver");
+            if (!visit)
+                return res.status(404).json({ message: "Visit not found" });
+            const scope = yield (0, driverScope_1.resolveDriverScope)(req, String(visit.driver));
+            if (scope.forbidden) {
+                return res.status(403).json({ message: scope.message });
+            }
+        }
         const expense = yield expense_1.default.findOne({ visit: visitId })
             .populate("food.approvedBy", "name")
             .populate("food.rejectedBy", "name")
@@ -232,14 +243,21 @@ function buildExpenseItem(data, type) {
     };
 }
 function updateExpenseItem(item, data) {
+    const amountChanged = data.amount !== undefined && Number(data.amount) !== Number(item.amount || 0);
+    const paidByChanged = data.paidBy !== undefined && data.paidBy !== item.paidBy;
     if (data.amount !== undefined)
         item.amount = data.amount;
-    if (data.paidBy !== undefined) {
+    if (data.paidBy !== undefined)
         item.paidBy = data.paidBy;
-        if (["pending", "auto_approved"].includes(item.status)) {
-            item.status = (0, expense_1.getInitialStatus)(data.paidBy);
-        }
-    }
     if (data.description !== undefined)
         item.description = data.description;
+    // Re-editing the figure invalidates any decision already taken on it —
+    // otherwise a changed amount would slip into the total without review.
+    if (amountChanged || paidByChanged) {
+        item.status = (0, expense_1.getInitialStatus)(item.paidBy);
+        item.approvedBy = null;
+        item.approvedAt = null;
+        item.rejectedBy = null;
+        item.rejectionRemark = "";
+    }
 }

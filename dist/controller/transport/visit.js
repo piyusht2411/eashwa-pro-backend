@@ -19,6 +19,7 @@ const driver_1 = __importDefault(require("../../model/driver"));
 const user_1 = __importDefault(require("../../model/user"));
 const notify_1 = require("../../utils/notify");
 const helpers_1 = require("../../utils/helpers");
+const driverScope_1 = require("../../utils/driverScope");
 // ─── Create Visit ─────────────────────────────────────────────────────────────
 const createVisit = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
@@ -32,9 +33,16 @@ const createVisit = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
         if (new Date(endDate) < new Date(startDate)) {
             return res.status(400).json({ message: "endDate cannot be before startDate" });
         }
+        // A driver may have no vehicle assigned, so the visit must carry one explicitly.
+        const resolvedVehicle = (vehicleNumber || driver.vehicleNumber || "").trim();
+        if (!resolvedVehicle) {
+            return res.status(400).json({
+                message: "vehicleNumber is required — this driver has no vehicle assigned",
+            });
+        }
         const visit = yield visit_1.default.create({
             driver: driverId,
-            vehicleNumber: vehicleNumber || driver.vehicleNumber,
+            vehicleNumber: resolvedVehicle,
             destination,
             startDate: new Date(startDate),
             endDate: new Date(endDate),
@@ -66,8 +74,17 @@ const getAllVisits = (req, res) => __awaiter(void 0, void 0, void 0, function* (
         const { driverId, search } = req.query;
         const { page, limit, skip } = (0, helpers_1.getPagination)(req.query);
         const filter = Object.assign({}, (0, helpers_1.buildDateFilter)(req.query));
-        if (driverId)
+        // A driver only ever sees their own visits — their id overrides any query param.
+        if ((0, driverScope_1.isDriverRole)(req)) {
+            const scope = yield (0, driverScope_1.resolveDriverScope)(req, driverId);
+            if (scope.forbidden) {
+                return res.status(403).json({ message: scope.message });
+            }
+            filter.driver = scope.driverId;
+        }
+        else if (driverId) {
             filter.driver = driverId;
+        }
         if (search) {
             filter.$or = [
                 { destination: { $regex: search, $options: "i" } },
@@ -96,6 +113,7 @@ const getAllVisits = (req, res) => __awaiter(void 0, void 0, void 0, function* (
 exports.getAllVisits = getAllVisits;
 // ─── Get Visit By ID ──────────────────────────────────────────────────────────
 const getVisitById = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a, _b;
     try {
         const visit = yield visit_1.default.findById(req.params.id)
             .populate("driver", "name vehicleNumber userId")
@@ -103,6 +121,14 @@ const getVisitById = (req, res) => __awaiter(void 0, void 0, void 0, function* (
             .populate("updatedBy", "name role");
         if (!visit)
             return res.status(404).json({ message: "Visit not found" });
+        // A driver may only open their own visits.
+        if ((0, driverScope_1.isDriverRole)(req)) {
+            const visitDriverId = String((_b = (_a = visit.driver) === null || _a === void 0 ? void 0 : _a._id) !== null && _b !== void 0 ? _b : visit.driver);
+            const scope = yield (0, driverScope_1.resolveDriverScope)(req, visitDriverId);
+            if (scope.forbidden) {
+                return res.status(403).json({ message: scope.message });
+            }
+        }
         const expense = yield expense_1.default.findOne({ visit: visit._id })
             .populate("food.approvedBy", "name")
             .populate("food.rejectedBy", "name")

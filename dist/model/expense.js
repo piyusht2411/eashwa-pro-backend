@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getInitialStatus = void 0;
 const mongoose_1 = require("mongoose");
+const expenseTotals_1 = require("../utils/expenseTotals");
 // ─── Shared sub-schema for each expense type ─────────────────────────────────
 const expenseItemSchema = {
     amount: { type: Number, default: 0, min: 0 },
@@ -52,7 +53,10 @@ const expenseSchema = new mongoose_1.Schema({
     cng: Object.assign(Object.assign({}, expenseItemSchema), { amount: { type: Number, default: 0, min: 0 }, paidBy: { type: String, enum: ["driver", "company"], default: "driver" } }),
     other: Object.assign(Object.assign({}, expenseItemSchema), { amount: { type: Number, default: 0, min: 0 }, paidBy: { type: String, enum: ["driver", "company"], default: "driver" }, description: { type: String, default: "" } }),
     // ─── Computed totals (stored for fast queries) ──────────────────────────
+    // totalExpense counts approved / auto-approved items only.
     totalExpense: { type: Number, default: 0 },
+    // Amount still awaiting approval — deliberately kept out of totalExpense.
+    pendingExpense: { type: Number, default: 0 },
     pendingReimbursement: { type: Number, default: 0 },
     approvedReimbursement: { type: Number, default: 0 },
     rejectedAmount: { type: Number, default: 0 },
@@ -64,22 +68,26 @@ const getInitialStatus = (paidBy) => {
 exports.getInitialStatus = getInitialStatus;
 // ─── Helper: recalculate stored totals ───────────────────────────────────────
 expenseSchema.methods.recalculateTotals = function () {
-    const items = [this.food, this.cng, this.other];
-    this.totalExpense = items.reduce((sum, i) => sum + (i.amount || 0), 0);
-    this.pendingReimbursement = items
-        .filter((i) => i.paidBy === "driver" && i.status === "pending")
-        .reduce((sum, i) => sum + (i.amount || 0), 0);
-    this.approvedReimbursement = items
-        .filter((i) => i.paidBy === "driver" && i.status === "approved")
-        .reduce((sum, i) => sum + (i.amount || 0), 0);
-    this.rejectedAmount = items
-        .filter((i) => i.paidBy === "driver" && i.status === "rejected")
-        .reduce((sum, i) => sum + (i.amount || 0), 0);
+    const totals = (0, expenseTotals_1.computeExpenseTotals)(this);
+    this.totalExpense = totals.totalExpense;
+    this.pendingExpense = totals.pendingExpense;
+    this.pendingReimbursement = totals.pendingReimbursement;
+    this.approvedReimbursement = totals.approvedReimbursement;
+    this.rejectedAmount = totals.rejectedAmount;
 };
 // ─── Auto-recalculate before every save ──────────────────────────────────────
 expenseSchema.pre("save", function (next) {
     this.recalculateTotals();
     next();
+});
+// ─── Recalculate on serialization too ────────────────────────────────────────
+// Documents written before the "approved only" rule still carry stale totals,
+// so every response recomputes them from the item statuses on the way out.
+expenseSchema.set("toJSON", {
+    transform: (_doc, ret) => {
+        Object.assign(ret, (0, expenseTotals_1.computeExpenseTotals)(ret));
+        return ret;
+    },
 });
 const Expense = (0, mongoose_1.model)("Expense", expenseSchema);
 exports.default = Expense;

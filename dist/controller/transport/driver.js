@@ -17,18 +17,19 @@ const driver_1 = __importDefault(require("../../model/driver"));
 const visit_1 = __importDefault(require("../../model/visit"));
 const expense_1 = __importDefault(require("../../model/expense"));
 const helpers_1 = require("../../utils/helpers");
+const driverScope_1 = require("../../utils/driverScope");
+const expenseTotals_1 = require("../../utils/expenseTotals");
 // ─── Create Driver ────────────────────────────────────────────────────────────
 const createDriver = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { name, vehicleNumber, userId } = req.body;
-        if (!name || !vehicleNumber) {
-            return res
-                .status(400)
-                .json({ message: "name and vehicleNumber are required" });
+        if (!name || !name.trim()) {
+            return res.status(400).json({ message: "name is required" });
         }
+        // vehicleNumber is optional — a driver can be added before a vehicle is assigned.
         const driver = yield driver_1.default.create({
             name: name.trim(),
-            vehicleNumber: vehicleNumber.trim().toUpperCase(),
+            vehicleNumber: vehicleNumber ? String(vehicleNumber).trim().toUpperCase() : "",
             userId: userId || null,
         });
         return res.status(201).json({
@@ -89,6 +90,13 @@ exports.getAllDrivers = getAllDrivers;
 // ─── Get Driver By ID ─────────────────────────────────────────────────────────
 const getDriverById = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
+        // A driver may only read their own profile.
+        if ((0, driverScope_1.isDriverRole)(req)) {
+            const scope = yield (0, driverScope_1.resolveDriverScope)(req, req.params.id);
+            if (scope.forbidden) {
+                return res.status(403).json({ message: scope.message });
+            }
+        }
         const driver = yield driver_1.default.findById(req.params.id).populate("userId", "email role");
         if (!driver)
             return res.status(404).json({ message: "Driver not found" });
@@ -101,10 +109,17 @@ const getDriverById = (req, res) => __awaiter(void 0, void 0, void 0, function* 
 exports.getDriverById = getDriverById;
 // ─── Get Driver Summary ───────────────────────────────────────────────────────
 const getDriverSummary = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d, _e, _f, _g;
     try {
         const { id } = req.params;
         const { page, limit, skip } = (0, helpers_1.getPagination)(req.query);
+        // A driver may only read their own summary.
+        if ((0, driverScope_1.isDriverRole)(req)) {
+            const scope = yield (0, driverScope_1.resolveDriverScope)(req, id);
+            if (scope.forbidden) {
+                return res.status(403).json({ message: scope.message });
+            }
+        }
         const driver = yield driver_1.default.findById(id);
         if (!driver)
             return res.status(404).json({ message: "Driver not found" });
@@ -120,15 +135,8 @@ const getDriverSummary = (req, res) => __awaiter(void 0, void 0, void 0, functio
         ]);
         const [expenseStats] = yield expense_1.default.aggregate([
             { $match: { driver: driver._id } },
-            {
-                $group: {
-                    _id: "$driver",
-                    totalExpense: { $sum: "$totalExpense" },
-                    approvedReimbursement: { $sum: "$approvedReimbursement" },
-                    pendingReimbursement: { $sum: "$pendingReimbursement" },
-                    rejectedAmount: { $sum: "$rejectedAmount" },
-                },
-            },
+            expenseTotals_1.expenseTotalsStage,
+            { $group: Object.assign({ _id: "$driver" }, expenseTotals_1.expenseTotalsAccumulators) },
         ]);
         const [visits, totalVisits] = yield Promise.all([
             visit_1.default.find({ driver: driver._id })
@@ -144,9 +152,10 @@ const getDriverSummary = (req, res) => __awaiter(void 0, void 0, void 0, functio
                 totalVisits: (_a = stats === null || stats === void 0 ? void 0 : stats.totalVisits) !== null && _a !== void 0 ? _a : 0,
                 totalDistance: (_b = stats === null || stats === void 0 ? void 0 : stats.totalDistance) !== null && _b !== void 0 ? _b : 0,
                 totalExpense: (_c = expenseStats === null || expenseStats === void 0 ? void 0 : expenseStats.totalExpense) !== null && _c !== void 0 ? _c : 0,
-                approvedReimbursement: (_d = expenseStats === null || expenseStats === void 0 ? void 0 : expenseStats.approvedReimbursement) !== null && _d !== void 0 ? _d : 0,
-                pendingReimbursement: (_e = expenseStats === null || expenseStats === void 0 ? void 0 : expenseStats.pendingReimbursement) !== null && _e !== void 0 ? _e : 0,
-                rejectedAmount: (_f = expenseStats === null || expenseStats === void 0 ? void 0 : expenseStats.rejectedAmount) !== null && _f !== void 0 ? _f : 0,
+                pendingExpense: (_d = expenseStats === null || expenseStats === void 0 ? void 0 : expenseStats.pendingExpense) !== null && _d !== void 0 ? _d : 0,
+                approvedReimbursement: (_e = expenseStats === null || expenseStats === void 0 ? void 0 : expenseStats.approvedReimbursement) !== null && _e !== void 0 ? _e : 0,
+                pendingReimbursement: (_f = expenseStats === null || expenseStats === void 0 ? void 0 : expenseStats.pendingReimbursement) !== null && _f !== void 0 ? _f : 0,
+                rejectedAmount: (_g = expenseStats === null || expenseStats === void 0 ? void 0 : expenseStats.rejectedAmount) !== null && _g !== void 0 ? _g : 0,
             },
             recentVisits: visits,
             pagination: (0, helpers_1.buildPaginationMeta)(page, limit, totalVisits),
@@ -167,8 +176,9 @@ const updateDriver = (req, res) => __awaiter(void 0, void 0, void 0, function* (
             return res.status(404).json({ message: "Driver not found" });
         if (name !== undefined)
             driver.name = name.trim();
+        // Allow clearing the vehicle by sending "" / null.
         if (vehicleNumber !== undefined)
-            driver.vehicleNumber = vehicleNumber.trim().toUpperCase();
+            driver.vehicleNumber = vehicleNumber ? String(vehicleNumber).trim().toUpperCase() : "";
         if (userId !== undefined)
             driver.userId = userId;
         if (isActive !== undefined)

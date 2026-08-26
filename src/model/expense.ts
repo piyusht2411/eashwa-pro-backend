@@ -1,5 +1,6 @@
 import { Schema, model } from "mongoose";
 import { IExpense, PaidBy, ExpenseStatus } from "../types";
+import { computeExpenseTotals } from "../utils/expenseTotals";
 
 // ─── Shared sub-schema for each expense type ─────────────────────────────────
 const expenseItemSchema = {
@@ -66,7 +67,10 @@ const expenseSchema = new Schema<IExpense>(
       description: { type: String, default: "" },
     },
     // ─── Computed totals (stored for fast queries) ──────────────────────────
+    // totalExpense counts approved / auto-approved items only.
     totalExpense: { type: Number, default: 0 },
+    // Amount still awaiting approval — deliberately kept out of totalExpense.
+    pendingExpense: { type: Number, default: 0 },
     pendingReimbursement: { type: Number, default: 0 },
     approvedReimbursement: { type: Number, default: 0 },
     rejectedAmount: { type: Number, default: 0 },
@@ -81,27 +85,29 @@ export const getInitialStatus = (paidBy: PaidBy): ExpenseStatus => {
 
 // ─── Helper: recalculate stored totals ───────────────────────────────────────
 expenseSchema.methods.recalculateTotals = function () {
-  const items = [this.food, this.cng, this.other];
+  const totals = computeExpenseTotals(this);
 
-  this.totalExpense = items.reduce((sum: number, i: any) => sum + (i.amount || 0), 0);
-
-  this.pendingReimbursement = items
-    .filter((i: any) => i.paidBy === "driver" && i.status === "pending")
-    .reduce((sum: number, i: any) => sum + (i.amount || 0), 0);
-
-  this.approvedReimbursement = items
-    .filter((i: any) => i.paidBy === "driver" && i.status === "approved")
-    .reduce((sum: number, i: any) => sum + (i.amount || 0), 0);
-
-  this.rejectedAmount = items
-    .filter((i: any) => i.paidBy === "driver" && i.status === "rejected")
-    .reduce((sum: number, i: any) => sum + (i.amount || 0), 0);
+  this.totalExpense = totals.totalExpense;
+  this.pendingExpense = totals.pendingExpense;
+  this.pendingReimbursement = totals.pendingReimbursement;
+  this.approvedReimbursement = totals.approvedReimbursement;
+  this.rejectedAmount = totals.rejectedAmount;
 };
 
 // ─── Auto-recalculate before every save ──────────────────────────────────────
 expenseSchema.pre("save", function (next) {
   (this as any).recalculateTotals();
   next();
+});
+
+// ─── Recalculate on serialization too ────────────────────────────────────────
+// Documents written before the "approved only" rule still carry stale totals,
+// so every response recomputes them from the item statuses on the way out.
+expenseSchema.set("toJSON", {
+  transform: (_doc, ret: any) => {
+    Object.assign(ret, computeExpenseTotals(ret));
+    return ret;
+  },
 });
 
 const Expense = model<IExpense>("Expense", expenseSchema);

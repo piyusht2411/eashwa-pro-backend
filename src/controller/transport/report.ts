@@ -3,6 +3,7 @@ import ExcelJS from "exceljs";
 import Visit from "../../model/visit";
 import Expense from "../../model/expense";
 import { buildDateFilter } from "../../utils/helpers";
+import { computeExpenseTotals, emptyExpenseTotals } from "../../utils/expenseTotals";
 
 // ─── Export Excel Report ──────────────────────────────────────────────────────
 export const exportExcel = async (req: Request, res: Response) => {
@@ -55,6 +56,7 @@ export const exportExcel = async (req: Request, res: Response) => {
       { header: "Other Paid By", key: "otherPaidBy", width: 14 },
       { header: "Other Status", key: "otherStatus", width: 14 },
       { header: "Total Expense (₹)", key: "totalExpense", width: 18 },
+      { header: "Awaiting Approval (₹)", key: "pendingExpense", width: 20 },
       { header: "Pending Reimb. (₹)", key: "pendingReimb", width: 18 },
       { header: "Approved Reimb. (₹)", key: "approvedReimb", width: 20 },
       { header: "Rejected Amt. (₹)", key: "rejectedAmt", width: 18 },
@@ -75,6 +77,9 @@ export const exportExcel = async (req: Request, res: Response) => {
     visits.forEach((visit, index) => {
       const expense = expenseMap.get(visit._id.toString());
       const driver = visit.driver as any;
+      // Recompute rather than trust stored fields, so rows written before the
+      // "approved only" rule still report correctly.
+      const totals = computeExpenseTotals(expense as any);
 
       const row = sheet.addRow({
         driverName: driver?.name || "",
@@ -96,10 +101,11 @@ export const exportExcel = async (req: Request, res: Response) => {
         otherDesc: (expense?.other as any)?.description || "",
         otherPaidBy: formatPaidBy(expense?.other?.paidBy),
         otherStatus: formatStatus(expense?.other?.status),
-        totalExpense: expense?.totalExpense ?? 0,
-        pendingReimb: expense?.pendingReimbursement ?? 0,
-        approvedReimb: expense?.approvedReimbursement ?? 0,
-        rejectedAmt: expense?.rejectedAmount ?? 0,
+        totalExpense: totals.totalExpense,
+        pendingExpense: totals.pendingExpense,
+        pendingReimb: totals.pendingReimbursement,
+        approvedReimb: totals.approvedReimbursement,
+        rejectedAmt: totals.rejectedAmount,
       });
 
       const bgColor = index % 2 === 0 ? "FFFAFAFA" : "FFE8F4FD";
@@ -116,6 +122,19 @@ export const exportExcel = async (req: Request, res: Response) => {
     });
 
     const allExpenses = expenses;
+    const grandTotals = allExpenses
+      .map((e) => computeExpenseTotals(e as any))
+      .reduce(
+        (acc, t) => ({
+          totalExpense: acc.totalExpense + t.totalExpense,
+          pendingExpense: acc.pendingExpense + t.pendingExpense,
+          pendingReimbursement: acc.pendingReimbursement + t.pendingReimbursement,
+          approvedReimbursement: acc.approvedReimbursement + t.approvedReimbursement,
+          rejectedAmount: acc.rejectedAmount + t.rejectedAmount,
+        }),
+        emptyExpenseTotals()
+      );
+
     const sumRow = sheet.addRow({
       driverName: "TOTAL",
       totalDays: visits.reduce((s, v) => s + (v.totalDays || 0), 0),
@@ -123,10 +142,11 @@ export const exportExcel = async (req: Request, res: Response) => {
       food: allExpenses.reduce((s, e) => s + (e.food?.amount || 0), 0),
       cng: allExpenses.reduce((s, e) => s + (e.cng?.amount || 0), 0),
       other: allExpenses.reduce((s, e) => s + (e.other?.amount || 0), 0),
-      totalExpense: allExpenses.reduce((s, e) => s + (e.totalExpense || 0), 0),
-      pendingReimb: allExpenses.reduce((s, e) => s + (e.pendingReimbursement || 0), 0),
-      approvedReimb: allExpenses.reduce((s, e) => s + (e.approvedReimbursement || 0), 0),
-      rejectedAmt: allExpenses.reduce((s, e) => s + (e.rejectedAmount || 0), 0),
+      totalExpense: grandTotals.totalExpense,
+      pendingExpense: grandTotals.pendingExpense,
+      pendingReimb: grandTotals.pendingReimbursement,
+      approvedReimb: grandTotals.approvedReimbursement,
+      rejectedAmt: grandTotals.rejectedAmount,
     });
 
     sumRow.eachCell((cell) => {
@@ -164,17 +184,33 @@ export const getVisitReport = async (req: Request, res: Response) => {
     const expenses = await Expense.find({ visit: { $in: visitIds } }).lean();
     const expenseMap = new Map(expenses.map((e) => [e.visit.toString(), e]));
 
-    const report = visits.map((visit) => ({
-      ...visit,
-      expense: expenseMap.get(visit._id.toString()) || null,
-    }));
+    const report = visits.map((visit) => {
+      const expense = expenseMap.get(visit._id.toString());
+      return {
+        ...visit,
+        // Overlay freshly computed totals so a row never shows an unapproved
+        // amount that was stored before the "approved only" rule.
+        expense: expense ? { ...expense, ...computeExpenseTotals(expense as any) } : null,
+      };
+    });
+
+    const rollup = expenses
+      .map((e) => computeExpenseTotals(e as any))
+      .reduce(
+        (acc, t) => ({
+          totalExpense: acc.totalExpense + t.totalExpense,
+          pendingExpense: acc.pendingExpense + t.pendingExpense,
+          pendingReimbursement: acc.pendingReimbursement + t.pendingReimbursement,
+          approvedReimbursement: acc.approvedReimbursement + t.approvedReimbursement,
+          rejectedAmount: acc.rejectedAmount + t.rejectedAmount,
+        }),
+        emptyExpenseTotals()
+      );
 
     const totals = {
       totalVisits: visits.length,
       totalDistance: visits.reduce((s, v) => s + (v.distance || 0), 0),
-      totalExpense: expenses.reduce((s, e) => s + (e.totalExpense || 0), 0),
-      pendingReimbursement: expenses.reduce((s, e) => s + (e.pendingReimbursement || 0), 0),
-      approvedReimbursement: expenses.reduce((s, e) => s + (e.approvedReimbursement || 0), 0),
+      ...rollup,
     };
 
     return res.status(200).json({ report, totals });

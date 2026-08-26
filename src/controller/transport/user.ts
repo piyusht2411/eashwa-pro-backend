@@ -14,11 +14,7 @@ export const createTransportUser = async (req: Request, res: Response) => {
         .json({ message: "name, email, password and role are required" });
     }
 
-    if (role === "driver" && !vehicleNumber) {
-      return res
-        .status(400)
-        .json({ message: "vehicleNumber is required for driver accounts" });
-    }
+    // vehicleNumber is optional for driver accounts — it can be assigned later.
 
     const allowed = ["admin", "accounts", "driver"];
     if (!allowed.includes(role)) {
@@ -50,7 +46,7 @@ export const createTransportUser = async (req: Request, res: Response) => {
     if (role === "driver") {
       await Driver.create({
         name: user.name,
-        vehicleNumber: vehicleNumber.trim().toUpperCase(),
+        vehicleNumber: vehicleNumber ? String(vehicleNumber).trim().toUpperCase() : "",
         userId: user._id,
       });
     }
