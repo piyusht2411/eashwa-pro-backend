@@ -1,7 +1,10 @@
 import { Request, Response } from "express";
+import { isValidObjectId } from "mongoose";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import User from "../model/user";
+import { canUseBothPortals } from "../middleware/authMiddleware";
+import { Portal } from "../types";
 import Container from "../model/container";
 import ProductionLog from "../model/productionLog";
 import PdiVerification from "../model/pdiVerification";
@@ -56,6 +59,51 @@ export const register = async (req: Request, res: Response) => {
   }
 };
 
+// ─── Auth Token Helpers ──────────────────────────────────────────────────────
+// `portal` is the portal the account belongs to; `activePortal` is the portal
+// the session is currently working in. They only differ for a cross-portal
+// admin who has switched.
+const signTokens = (user: {
+  _id: any;
+  role: string;
+  portal: Portal;
+}, activePortal: Portal) => ({
+  authToken: jwt.sign(
+    { userId: user._id, role: user.role, portal: user.portal, activePortal },
+    process.env.JWT_SECRET_KEY || "",
+    { expiresIn: "30d" }
+  ),
+  refreshToken: jwt.sign(
+    { userId: user._id, role: user.role, portal: user.portal, activePortal },
+    process.env.JWT_REFRESH_SECRET_KEY || "",
+    { expiresIn: "60d" }
+  ),
+});
+
+const setRefreshCookie = (res: Response, refreshToken: string) => {
+  res.cookie("refreshToken", refreshToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+  });
+};
+
+const authUserPayload = (user: any, activePortal: Portal) => ({
+  _id: user._id,
+  name: user.name,
+  email: user.email,
+  role: user.role,
+  // The portal the app should route into right now.
+  portal: activePortal,
+  // The portal the account itself lives in — unchanged by switching.
+  homePortal: user.portal,
+  crossPortalAccess: canUseBothPortals(user),
+  availablePortals: canUseBothPortals(user)
+    ? (["production", "transport"] as Portal[])
+    : [user.portal],
+  phone: user.phone,
+});
+
 // ─── Login ───────────────────────────────────────────────────────────────────
 export const login = async (req: Request, res: Response) => {
   try {
@@ -77,34 +125,48 @@ export const login = async (req: Request, res: Response) => {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
-    const authToken = jwt.sign(
-      { userId: user._id, role: user.role, portal: user.portal },
-      process.env.JWT_SECRET_KEY || "",
-      { expiresIn: "30d" }
-    );
-    const refreshToken = jwt.sign(
-      { userId: user._id, role: user.role, portal: user.portal },
-      process.env.JWT_REFRESH_SECRET_KEY || "",
-      { expiresIn: "60d" }
-    );
-
-    res.cookie("refreshToken", refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-    });
+    // A cross-portal admin starts in their own portal and can switch after.
+    const { authToken, refreshToken } = signTokens(user, user.portal);
+    setRefreshCookie(res, refreshToken);
 
     return res.status(200).json({
       message: "Login successful",
       token: authToken,
-      user: {
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        portal: user.portal,
-        phone: user.phone,
-      },
+      user: authUserPayload(user, user.portal),
+    });
+  } catch (err: any) {
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── Switch Portal (cross-portal admin) ──────────────────────────────────────
+// Re-issues the session tokens against the requested portal so the admin can
+// work in Production and Transport from a single account.
+export const switchPortal = async (req: Request, res: Response) => {
+  try {
+    const { portal } = req.body as { portal?: Portal };
+    if (portal !== "production" && portal !== "transport") {
+      return res.status(400).json({ message: "portal must be production or transport" });
+    }
+
+    const user = await User.findById(req.userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user.isActive) {
+      return res.status(403).json({ message: "Account is deactivated. Contact admin." });
+    }
+    if (!canUseBothPortals(user)) {
+      return res.status(403).json({
+        message: "This account is not enabled to switch portals",
+      });
+    }
+
+    const { authToken, refreshToken } = signTokens(user, portal);
+    setRefreshCookie(res, refreshToken);
+
+    return res.status(200).json({
+      message: `Switched to ${portal} portal`,
+      token: authToken,
+      user: authUserPayload(user, portal),
     });
   } catch (err: any) {
     return res.status(500).json({ message: err.message });
@@ -116,7 +178,12 @@ export const getMe = async (req: Request, res: Response) => {
   try {
     const user = await User.findById(req.userId).select("-password -passwordResetToken -fcmToken");
     if (!user) return res.status(404).json({ message: "User not found" });
-    return res.status(200).json({ user });
+    // Report the portal this session is working in, not just the account's own,
+    // so a cross-portal admin who switched stays where they were.
+    const activePortal = (req.userPortal as Portal) ?? user.portal;
+    return res.status(200).json({
+      user: { ...user.toObject(), ...authUserPayload(user, activePortal) },
+    });
   } catch (err: any) {
     return res.status(500).json({ message: err.message });
   }
@@ -182,7 +249,7 @@ export const getUserById = async (req: Request, res: Response) => {
 export const updateUser = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { name, email, password, role, phone, isActive } = req.body;
+    const { name, email, password, role, phone, isActive, crossPortalAccess } = req.body;
 
     const user = await User.findById(id);
     if (!user) return res.status(404).json({ message: "User not found" });
@@ -221,6 +288,15 @@ export const updateUser = async (req: Request, res: Response) => {
     if (password !== undefined) user.password = password;
     if (isActive !== undefined) user.isActive = isActive;
 
+    if (crossPortalAccess !== undefined) {
+      if (user.role !== "admin" && crossPortalAccess) {
+        return res.status(400).json({
+          message: "Only an admin account can be given cross-portal access",
+        });
+      }
+      user.crossPortalAccess = Boolean(crossPortalAccess);
+    }
+
     await user.save();
 
     return res.status(200).json({
@@ -231,6 +307,7 @@ export const updateUser = async (req: Request, res: Response) => {
         email: user.email,
         role: user.role,
         portal: user.portal,
+        crossPortalAccess: user.crossPortalAccess,
         phone: user.phone,
         isActive: user.isActive,
       },
@@ -293,14 +370,25 @@ export const deleteUser = async (req: Request, res: Response) => {
 };
 
 // ─── Change Password (by Email) ───────────────────────────────────────────────
+// Identifies the account by either email or user id, so a caller that only
+// holds one of them does not have to look up the other first — the app knows
+// its user id, a web form knows the email. Knowing the current password is
+// still what authorises the change; this route is deliberately unauthenticated.
 export const changePassword = async (req: Request, res: Response) => {
   try {
-    const { email, currentPassword, newPassword } = req.body;
+    const { email, userId, id, currentPassword, newPassword } = req.body;
+    const requestedId = userId ?? id;
 
-    if (!email || !currentPassword || !newPassword) {
+    if (!currentPassword || !newPassword) {
       return res
         .status(400)
-        .json({ message: "email, currentPassword and newPassword are required" });
+        .json({ message: "currentPassword and newPassword are required" });
+    }
+
+    if (!email && !requestedId) {
+      return res
+        .status(400)
+        .json({ message: "email or userId is required" });
     }
 
     if (newPassword.length < 6) {
@@ -315,7 +403,16 @@ export const changePassword = async (req: Request, res: Response) => {
         .json({ message: "New password must be different from current password" });
     }
 
-    const user = await User.findOne({ email: email.toLowerCase().trim() });
+    // An id lookup is preferred when both arrive — it is the unambiguous key.
+    let user = null;
+    if (requestedId) {
+      if (!isValidObjectId(requestedId)) {
+        return res.status(400).json({ message: "userId is not a valid id" });
+      }
+      user = await User.findById(requestedId);
+    } else {
+      user = await User.findOne({ email: String(email).toLowerCase().trim() });
+    }
     if (!user) return res.status(404).json({ message: "User not found" });
 
     const isMatch = await bcrypt.compare(currentPassword, user.password);

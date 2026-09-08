@@ -82,9 +82,9 @@ const upsertExpense = (req, res) => __awaiter(void 0, void 0, void 0, function* 
         yield expense.save();
         const hasPending = [expense.food, expense.cng, expense.other].some((item) => item.status === "pending");
         if (hasPending) {
-            const admins = yield user_1.default.find({ role: "admin", portal: "transport", isActive: true }).select("_id");
-            if (admins.length > 0) {
-                yield (0, notify_1.sendPushNotificationToMany)(admins.map((a) => a._id), "Expense Approval Required", `Expense for ${(driver === null || driver === void 0 ? void 0 : driver.name) || "driver"} → ${visit.destination} needs your approval`, { type: "approval_required", expenseId: expense._id.toString(), visitId });
+            const adminIds = yield (0, notify_1.getPortalAdminIds)("transport");
+            if (adminIds.length > 0) {
+                yield (0, notify_1.sendPushNotificationToMany)(adminIds, "Expense Approval Required", `Expense for ${(driver === null || driver === void 0 ? void 0 : driver.name) || "driver"} → ${visit.destination} needs your approval`, { type: "approval_required", expenseId: expense._id.toString(), visitId });
             }
         }
         return res.status(200).json({ message: "Expense saved successfully", expense });

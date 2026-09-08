@@ -35,10 +35,23 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.sendPushNotificationToMany = exports.sendPushNotification = exports.createNotificationRecord = void 0;
+exports.sendPushNotificationToMany = exports.sendPushNotification = exports.createNotificationRecord = exports.getPortalAdminIds = void 0;
 const admin = __importStar(require("firebase-admin"));
 const user_1 = __importDefault(require("../model/user"));
 const notification_1 = __importDefault(require("../model/notification"));
+/**
+ * Active admins who should be notified about a portal's events: the admins of
+ * that portal, plus cross-portal admins who administer it from another portal.
+ */
+const getPortalAdminIds = (portal) => __awaiter(void 0, void 0, void 0, function* () {
+    const admins = yield user_1.default.find({
+        role: "admin",
+        isActive: true,
+        $or: [{ portal }, { crossPortalAccess: true }],
+    }).select("_id");
+    return admins.map((a) => a._id);
+});
+exports.getPortalAdminIds = getPortalAdminIds;
 /**
  * Persist a notification record in the DB so the in-app notification feed has it.
  * Silently swallows errors so it never breaks the main flow.

@@ -22,6 +22,10 @@ export interface IUser {
   tokenExpire?: Date | null;
   portal: Portal;
   role: Role;
+  // Admins who administer both portals with a single account. When true the
+  // portal guard lets this user work in either portal and the app shows a
+  // portal switch. Only meaningful for role "admin".
+  crossPortalAccess: boolean;
   phone?: string;
   fcmToken?: string | null;
   isActive: boolean;

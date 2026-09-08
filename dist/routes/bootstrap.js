@@ -46,4 +46,40 @@ router.post("/admin", (req, res) => __awaiter(void 0, void 0, void 0, function* 
         return res.status(500).json({ message: err.message });
     }
 }));
+// One-time switch to let an existing admin account run both portals. After
+// this the admin sees a portal switch in the app; revoke with enabled: false.
+router.post("/cross-portal-admin", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        if (!process.env.BOOTSTRAP_SECRET || req.header("x-bootstrap-secret") !== process.env.BOOTSTRAP_SECRET) {
+            return res.status(401).json({ message: "Invalid bootstrap secret" });
+        }
+        const { email, enabled = true } = req.body;
+        if (!email)
+            return res.status(400).json({ message: "email is required" });
+        const user = yield user_1.default.findOne({ email: email.toLowerCase().trim() });
+        if (!user)
+            return res.status(404).json({ message: "User not found" });
+        if (user.role !== "admin") {
+            return res.status(400).json({ message: "Only an admin account can be given cross-portal access" });
+        }
+        user.crossPortalAccess = Boolean(enabled);
+        yield user.save();
+        return res.status(200).json({
+            message: user.crossPortalAccess
+                ? "Cross-portal access enabled"
+                : "Cross-portal access revoked",
+            user: {
+                _id: user._id,
+                name: user.name,
+                email: user.email,
+                role: user.role,
+                portal: user.portal,
+                crossPortalAccess: user.crossPortalAccess,
+            },
+        });
+    }
+    catch (err) {
+        return res.status(500).json({ message: err.message });
+    }
+}));
 exports.default = router;

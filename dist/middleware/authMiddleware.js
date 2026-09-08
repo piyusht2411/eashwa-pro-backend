@@ -12,12 +12,26 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.requirePortal = exports.requireRole = exports.authenticateToken = void 0;
+exports.requirePortal = exports.requireRole = exports.authenticateToken = exports.canUseBothPortals = void 0;
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const user_1 = __importDefault(require("../model/user"));
+/**
+ * An admin flagged with `crossPortalAccess` administers both portals from one
+ * account, so the portal they are currently working in comes from the token
+ * rather than from their user record.
+ */
+const canUseBothPortals = (user) => user.role === "admin" && user.crossPortalAccess === true;
+exports.canUseBothPortals = canUseBothPortals;
+const resolveActivePortal = (user, activePortalClaim) => {
+    if (!(0, exports.canUseBothPortals)(user))
+        return user.portal;
+    return activePortalClaim === "production" || activePortalClaim === "transport"
+        ? activePortalClaim
+        : user.portal;
+};
 // ─── Authenticate JWT ─────────────────────────────────────────────────────────
 const authenticateToken = (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a;
+    var _a, _b, _c;
     const authHeader = req.header("authorization");
     if (!authHeader) {
         return res.status(401).json({ message: "No token provided" });
@@ -25,7 +39,7 @@ const authenticateToken = (req, res, next) => __awaiter(void 0, void 0, void 0, 
     const token = authHeader.replace("Bearer ", "").trim();
     try {
         const decoded = jsonwebtoken_1.default.verify(token, process.env.JWT_SECRET_KEY || "");
-        const user = yield user_1.default.findById(decoded.userId).select("_id role portal name isActive");
+        const user = yield user_1.default.findById(decoded.userId).select("_id role portal crossPortalAccess name isActive");
         if (!user) {
             return res.status(401).json({ message: "User not found" });
         }
@@ -34,7 +48,9 @@ const authenticateToken = (req, res, next) => __awaiter(void 0, void 0, void 0, 
         }
         req.userId = decoded.userId;
         req.userRole = user.role;
-        req.userPortal = user.portal;
+        // A cross-portal admin carries the portal they switched into on the token;
+        // everyone else is pinned to the portal on their account.
+        req.userPortal = resolveActivePortal(user, decoded.activePortal);
         next();
     }
     catch (err) {
@@ -45,14 +61,19 @@ const authenticateToken = (req, res, next) => __awaiter(void 0, void 0, void 0, 
         }
         try {
             const refreshDecoded = jsonwebtoken_1.default.verify(refreshToken, process.env.JWT_REFRESH_SECRET_KEY || "");
-            const newAuthToken = jsonwebtoken_1.default.sign({ userId: refreshDecoded.userId, role: refreshDecoded.role, portal: refreshDecoded.portal }, process.env.JWT_SECRET_KEY || "", { expiresIn: "30d" });
+            const newAuthToken = jsonwebtoken_1.default.sign({
+                userId: refreshDecoded.userId,
+                role: refreshDecoded.role,
+                portal: refreshDecoded.portal,
+                activePortal: (_b = refreshDecoded.activePortal) !== null && _b !== void 0 ? _b : refreshDecoded.portal,
+            }, process.env.JWT_SECRET_KEY || "", { expiresIn: "30d" });
             res.header("Authorization", `Bearer ${newAuthToken}`);
             req.userId = refreshDecoded.userId;
             req.userRole = refreshDecoded.role;
-            req.userPortal = refreshDecoded.portal;
+            req.userPortal = (_c = refreshDecoded.activePortal) !== null && _c !== void 0 ? _c : refreshDecoded.portal;
             next();
         }
-        catch (_b) {
+        catch (_d) {
             return res.status(401).json({ message: "Session expired, please login again" });
         }
     }
@@ -75,14 +96,24 @@ exports.requireRole = requireRole;
 // ─── Portal Guard ────────────────────────────────────────────────────────────
 const requirePortal = (...portals) => {
     return (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
-        const user = yield user_1.default.findById(req.userId).select("portal");
-        if (!user || !portals.includes(user.portal)) {
+        const user = yield user_1.default.findById(req.userId).select("portal role crossPortalAccess");
+        if (!user) {
             return res.status(403).json({
                 message: `Access denied. Required portal(s): ${portals.join(", ")}`,
             });
         }
-        req.userPortal = user.portal;
-        next();
+        if (portals.includes(user.portal)) {
+            req.userPortal = user.portal;
+            return next();
+        }
+        // A cross-portal admin may work outside their own portal.
+        if ((0, exports.canUseBothPortals)(user)) {
+            req.userPortal = portals[0];
+            return next();
+        }
+        return res.status(403).json({
+            message: `Access denied. Required portal(s): ${portals.join(", ")}`,
+        });
     });
 };
 exports.requirePortal = requirePortal;

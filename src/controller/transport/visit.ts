@@ -2,8 +2,7 @@ import { Request, Response } from "express";
 import Visit from "../../model/visit";
 import Expense from "../../model/expense";
 import Driver from "../../model/driver";
-import User from "../../model/user";
-import { sendPushNotification, sendPushNotificationToMany } from "../../utils/notify";
+import { getPortalAdminIds, sendPushNotification, sendPushNotificationToMany } from "../../utils/notify";
 import { getPagination, buildPaginationMeta, buildDateFilter } from "../../utils/helpers";
 import { isDriverRole, resolveDriverScope } from "../../utils/driverScope";
 
@@ -44,10 +43,10 @@ export const createVisit = async (req: Request, res: Response) => {
     });
 
     // Notify transport admins about new visit
-    const admins = await User.find({ role: "admin", portal: "transport", isActive: true }).select("_id");
-    if (admins.length > 0) {
+    const adminIds = await getPortalAdminIds("transport");
+    if (adminIds.length > 0) {
       await sendPushNotificationToMany(
-        admins.map((a) => a._id),
+        adminIds,
         "New Visit Created",
         `${driver.name} → ${destination} (${visit.totalDays} day${visit.totalDays > 1 ? "s" : ""})`,
         { type: "new_visit", visitId: visit._id.toString() }

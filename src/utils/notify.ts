@@ -3,6 +3,21 @@ import User from "../model/user";
 import Notification from "../model/notification";
 
 /**
+ * Active admins who should be notified about a portal's events: the admins of
+ * that portal, plus cross-portal admins who administer it from another portal.
+ */
+export const getPortalAdminIds = async (
+  portal: "production" | "transport"
+): Promise<any[]> => {
+  const admins = await User.find({
+    role: "admin",
+    isActive: true,
+    $or: [{ portal }, { crossPortalAccess: true }],
+  }).select("_id");
+  return admins.map((a) => a._id);
+};
+
+/**
  * Persist a notification record in the DB so the in-app notification feed has it.
  * Silently swallows errors so it never breaks the main flow.
  */

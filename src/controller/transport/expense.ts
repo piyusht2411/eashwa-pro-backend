@@ -3,7 +3,7 @@ import Expense, { getInitialStatus } from "../../model/expense";
 import Visit from "../../model/visit";
 import Driver from "../../model/driver";
 import User from "../../model/user";
-import { sendPushNotification, sendPushNotificationToMany } from "../../utils/notify";
+import { getPortalAdminIds, sendPushNotification, sendPushNotificationToMany } from "../../utils/notify";
 import { maxFoodAllowance } from "../../utils/helpers";
 import { isDriverRole, resolveDriverScope } from "../../utils/driverScope";
 import { PaidBy } from "../../types";
@@ -54,10 +54,10 @@ export const upsertExpense = async (req: Request, res: Response) => {
     );
 
     if (hasPending) {
-      const admins = await User.find({ role: "admin", portal: "transport", isActive: true }).select("_id");
-      if (admins.length > 0) {
+      const adminIds = await getPortalAdminIds("transport");
+      if (adminIds.length > 0) {
         await sendPushNotificationToMany(
-          admins.map((a) => a._id),
+          adminIds,
           "Expense Approval Required",
           `Expense for ${driver?.name || "driver"} → ${visit.destination} needs your approval`,
           { type: "approval_required", expenseId: expense._id.toString(), visitId }

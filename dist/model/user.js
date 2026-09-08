@@ -50,6 +50,13 @@ const userSchema = new mongoose_1.Schema({
         default: "team",
         required: true,
     },
+    // Set on an admin who runs both portals from one account. The portal guard
+    // then admits them to either portal and the app offers a portal switch.
+    // Ignored for every non-admin role.
+    crossPortalAccess: {
+        type: Boolean,
+        default: false,
+    },
     phone: {
         type: String,
         default: "",

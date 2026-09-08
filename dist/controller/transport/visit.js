@@ -16,7 +16,6 @@ exports.deleteVisit = exports.updateVisit = exports.getVisitById = exports.getAl
 const visit_1 = __importDefault(require("../../model/visit"));
 const expense_1 = __importDefault(require("../../model/expense"));
 const driver_1 = __importDefault(require("../../model/driver"));
-const user_1 = __importDefault(require("../../model/user"));
 const notify_1 = require("../../utils/notify");
 const helpers_1 = require("../../utils/helpers");
 const driverScope_1 = require("../../utils/driverScope");
@@ -52,9 +51,9 @@ const createVisit = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
             createdBy: req.userId,
         });
         // Notify transport admins about new visit
-        const admins = yield user_1.default.find({ role: "admin", portal: "transport", isActive: true }).select("_id");
-        if (admins.length > 0) {
-            yield (0, notify_1.sendPushNotificationToMany)(admins.map((a) => a._id), "New Visit Created", `${driver.name} → ${destination} (${visit.totalDays} day${visit.totalDays > 1 ? "s" : ""})`, { type: "new_visit", visitId: visit._id.toString() });
+        const adminIds = yield (0, notify_1.getPortalAdminIds)("transport");
+        if (adminIds.length > 0) {
+            yield (0, notify_1.sendPushNotificationToMany)(adminIds, "New Visit Created", `${driver.name} → ${destination} (${visit.totalDays} day${visit.totalDays > 1 ? "s" : ""})`, { type: "new_visit", visitId: visit._id.toString() });
         }
         // Notify driver user if linked
         if (driver.userId) {

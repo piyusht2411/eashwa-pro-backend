@@ -10,6 +10,8 @@ router.post("/login", user_1.login);
 router.post("/logout", user_1.logout);
 // Protected
 router.get("/me", authMiddleware_1.authenticateToken, user_1.getMe);
+// Cross-portal admins only — re-issues the session against the other portal
+router.post("/switch-portal", authMiddleware_1.authenticateToken, (0, authMiddleware_1.requireRole)("admin"), user_1.switchPortal);
 router.patch("/fcm-token", authMiddleware_1.authenticateToken, user_1.updateFcmToken);
 router.patch("/change-password", user_1.changePassword);
 // Admin only
