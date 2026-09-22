@@ -7,7 +7,8 @@
     "build": "npx tsc",
     "start": "ts-node ./src/index.ts",
     "dev": "nodemon --exec ts-node ./src/index.ts",
-    "recalc:expenses": "ts-node ./src/scripts/recalcExpenseTotals.ts"
+    "recalc:expenses": "ts-node ./src/scripts/recalcExpenseTotals.ts",
+    "split:expenses": "ts-node ./src/scripts/splitExpenseAmounts.ts"
   },
   "keywords": [],
   "author": "",

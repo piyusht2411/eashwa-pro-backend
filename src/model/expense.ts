@@ -1,15 +1,30 @@
 import { Schema, model } from "mongoose";
 import { IExpense, PaidBy, ExpenseStatus } from "../types";
-import { computeExpenseTotals } from "../utils/expenseTotals";
+import {
+  companyAmountOf,
+  computeExpenseTotals,
+  driverAmountOf,
+  normalizeExpense,
+  paidByOf,
+} from "../utils/expenseTotals";
 
 // ─── Shared sub-schema for each expense type ─────────────────────────────────
+// An expense is split across two payers. Either side may be zero; both may be
+// filled when a single bill was settled partly by the driver and partly by the
+// company (₹4000 of CNG = ₹2000 driver + ₹2000 company).
 const expenseItemSchema = {
+  driverAmount: { type: Number, default: 0, min: 0 },
+  companyAmount: { type: Number, default: 0, min: 0 },
+  // Derived on every save: driverAmount + companyAmount. Stored so reports and
+  // app builds that predate the split keep reading a sensible figure.
   amount: { type: Number, default: 0, min: 0 },
+  // Derived on every save from which portions are non-zero.
   paidBy: {
     type: String,
-    enum: ["driver", "company"],
-    required: true,
+    enum: ["driver", "company", "both"],
+    default: "driver",
   },
+  // Describes the DRIVER portion only — the company portion needs no approval.
   status: {
     type: String,
     enum: ["pending", "approved", "rejected", "auto_approved"],
@@ -50,26 +65,17 @@ const expenseSchema = new Schema<IExpense>(
       required: true,
       index: true,
     },
-    food: {
-      ...expenseItemSchema,
-      amount: { type: Number, default: 0, min: 0 },
-      paidBy: { type: String, enum: ["driver", "company"], default: "driver" },
-    },
-    cng: {
-      ...expenseItemSchema,
-      amount: { type: Number, default: 0, min: 0 },
-      paidBy: { type: String, enum: ["driver", "company"], default: "driver" },
-    },
+    food: { ...expenseItemSchema },
+    cng: { ...expenseItemSchema },
     other: {
       ...expenseItemSchema,
-      amount: { type: Number, default: 0, min: 0 },
-      paidBy: { type: String, enum: ["driver", "company"], default: "driver" },
       description: { type: String, default: "" },
     },
     // ─── Computed totals (stored for fast queries) ──────────────────────────
-    // totalExpense counts approved / auto-approved items only.
+    // totalExpense counts company portions plus approved / auto-approved
+    // driver portions.
     totalExpense: { type: Number, default: 0 },
-    // Amount still awaiting approval — deliberately kept out of totalExpense.
+    // Driver money still awaiting approval — deliberately kept out of totalExpense.
     pendingExpense: { type: Number, default: 0 },
     pendingReimbursement: { type: Number, default: 0 },
     approvedReimbursement: { type: Number, default: 0 },
@@ -78,9 +84,24 @@ const expenseSchema = new Schema<IExpense>(
   { timestamps: true }
 );
 
-// ─── Helper: determine initial status based on paidBy ────────────────────────
-export const getInitialStatus = (paidBy: PaidBy): ExpenseStatus => {
-  return paidBy === "company" ? "auto_approved" : "pending";
+// ─── Helper: initial status for an item ──────────────────────────────────────
+// Only the driver's own money needs approving. Nothing out of pocket means
+// there is nothing to reimburse, so the item clears straight away.
+export const getInitialStatus = (driverAmount: number): ExpenseStatus =>
+  Number(driverAmount) > 0 ? "pending" : "auto_approved";
+
+// ─── Helper: refresh the derived amount / paidBy on each item ────────────────
+const syncDerivedFields = (doc: any) => {
+  for (const field of ["food", "cng", "other"] as const) {
+    const item = doc?.[field];
+    if (!item) continue;
+    const driverAmount = driverAmountOf(item);
+    const companyAmount = companyAmountOf(item);
+    item.driverAmount = driverAmount;
+    item.companyAmount = companyAmount;
+    item.amount = driverAmount + companyAmount;
+    item.paidBy = paidByOf(driverAmount, companyAmount) as PaidBy;
+  }
 };
 
 // ─── Helper: recalculate stored totals ───────────────────────────────────────
@@ -94,17 +115,20 @@ expenseSchema.methods.recalculateTotals = function () {
   this.rejectedAmount = totals.rejectedAmount;
 };
 
-// ─── Auto-recalculate before every save ──────────────────────────────────────
+// ─── Keep derived fields and totals in step before every save ────────────────
 expenseSchema.pre("save", function (next) {
+  syncDerivedFields(this);
   (this as any).recalculateTotals();
   next();
 });
 
 // ─── Recalculate on serialization too ────────────────────────────────────────
-// Documents written before the "approved only" rule still carry stale totals,
-// so every response recomputes them from the item statuses on the way out.
+// Documents written before the split (single amount + paidBy) and before the
+// "approved only" rule still carry the old shape, so every response fills in
+// the per-payer amounts and recomputes totals on the way out.
 expenseSchema.set("toJSON", {
   transform: (_doc, ret: any) => {
+    normalizeExpense(ret);
     Object.assign(ret, computeExpenseTotals(ret));
     return ret;
   },

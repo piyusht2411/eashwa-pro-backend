@@ -6,6 +6,7 @@ import { buildDateFilter } from "../../utils/helpers";
 import { isDriverRole, resolveDriverScope } from "../../utils/driverScope";
 import {
   expenseTotalsStage,
+  PENDING_EXPENSE_FILTER,
   expenseTotalsAccumulators,
   emptyExpenseTotals,
 } from "../../utils/expenseTotals";
@@ -32,13 +33,7 @@ export const getAdminDashboard = async (req: Request, res: Response) => {
         { $group: { _id: null, ...expenseTotalsAccumulators } },
       ]),
 
-      Expense.countDocuments({
-        $or: [
-          { "food.status": "pending" },
-          { "cng.status": "pending" },
-          { "other.status": "pending" },
-        ],
-      }),
+      Expense.countDocuments(PENDING_EXPENSE_FILTER),
 
       Visit.find(visitFilter)
         .populate("driver", "name vehicleNumber")
@@ -46,13 +41,7 @@ export const getAdminDashboard = async (req: Request, res: Response) => {
         .sort({ startDate: -1 })
         .limit(5),
 
-      Expense.find({
-        $or: [
-          { "food.status": "pending" },
-          { "cng.status": "pending" },
-          { "other.status": "pending" },
-        ],
-      })
+      Expense.find(PENDING_EXPENSE_FILTER)
         .populate({ path: "visit", select: "destination startDate endDate totalDays" })
         .populate("driver", "name vehicleNumber")
         .sort({ updatedAt: -1 })
@@ -94,13 +83,7 @@ export const getAccountsDashboard = async (req: Request, res: Response) => {
     const [totalDrivers, totalVisits, pendingApprovals, recentVisits] = await Promise.all([
       Driver.countDocuments({ isActive: true }),
       Visit.countDocuments(visitFilter),
-      Expense.countDocuments({
-        $or: [
-          { "food.status": "pending" },
-          { "cng.status": "pending" },
-          { "other.status": "pending" },
-        ],
-      }),
+      Expense.countDocuments(PENDING_EXPENSE_FILTER),
       Visit.find(visitFilter)
         .populate("driver", "name vehicleNumber")
         .populate("createdBy", "name")

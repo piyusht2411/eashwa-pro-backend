@@ -3,7 +3,12 @@ import ExcelJS from "exceljs";
 import Visit from "../../model/visit";
 import Expense from "../../model/expense";
 import { buildDateFilter } from "../../utils/helpers";
-import { computeExpenseTotals, emptyExpenseTotals } from "../../utils/expenseTotals";
+import {
+  companyAmountOf,
+  computeExpenseTotals,
+  driverAmountOf,
+  emptyExpenseTotals,
+} from "../../utils/expenseTotals";
 
 // ─── Export Excel Report ──────────────────────────────────────────────────────
 export const exportExcel = async (req: Request, res: Response) => {
@@ -46,14 +51,20 @@ export const exportExcel = async (req: Request, res: Response) => {
       { header: "Distance (km)", key: "distance", width: 14 },
       { header: "Quantity", key: "quantity", width: 10 },
       { header: "Food Expense (₹)", key: "food", width: 18 },
-      { header: "Food Paid By", key: "foodPaidBy", width: 14 },
+      { header: "Food — Driver Paid (₹)", key: "foodDriver", width: 20 },
+      { header: "Food — Company Paid (₹)", key: "foodCompany", width: 22 },
+      { header: "Food Paid By", key: "foodPaidBy", width: 18 },
       { header: "Food Status", key: "foodStatus", width: 14 },
       { header: "CNG Expense (₹)", key: "cng", width: 18 },
-      { header: "CNG Paid By", key: "cngPaidBy", width: 14 },
+      { header: "CNG — Driver Paid (₹)", key: "cngDriver", width: 20 },
+      { header: "CNG — Company Paid (₹)", key: "cngCompany", width: 22 },
+      { header: "CNG Paid By", key: "cngPaidBy", width: 18 },
       { header: "CNG Status", key: "cngStatus", width: 14 },
       { header: "Other Expense (₹)", key: "other", width: 18 },
       { header: "Other Description", key: "otherDesc", width: 22 },
-      { header: "Other Paid By", key: "otherPaidBy", width: 14 },
+      { header: "Other — Driver Paid (₹)", key: "otherDriver", width: 20 },
+      { header: "Other — Company Paid (₹)", key: "otherCompany", width: 22 },
+      { header: "Other Paid By", key: "otherPaidBy", width: 18 },
       { header: "Other Status", key: "otherStatus", width: 14 },
       { header: "Total Expense (₹)", key: "totalExpense", width: 18 },
       { header: "Awaiting Approval (₹)", key: "pendingExpense", width: 20 },
@@ -91,15 +102,21 @@ export const exportExcel = async (req: Request, res: Response) => {
         billNumber: visit.billNumber || "",
         distance: visit.distance || 0,
         quantity: visit.quantity || 0,
-        food: expense?.food?.amount ?? 0,
-        foodPaidBy: formatPaidBy(expense?.food?.paidBy),
+        food: itemTotal(expense?.food),
+        foodDriver: driverAmountOf(expense?.food),
+        foodCompany: companyAmountOf(expense?.food),
+        foodPaidBy: formatPaidBy(expense?.food),
         foodStatus: formatStatus(expense?.food?.status),
-        cng: expense?.cng?.amount ?? 0,
-        cngPaidBy: formatPaidBy(expense?.cng?.paidBy),
+        cng: itemTotal(expense?.cng),
+        cngDriver: driverAmountOf(expense?.cng),
+        cngCompany: companyAmountOf(expense?.cng),
+        cngPaidBy: formatPaidBy(expense?.cng),
         cngStatus: formatStatus(expense?.cng?.status),
-        other: expense?.other?.amount ?? 0,
+        other: itemTotal(expense?.other),
         otherDesc: (expense?.other as any)?.description || "",
-        otherPaidBy: formatPaidBy(expense?.other?.paidBy),
+        otherDriver: driverAmountOf(expense?.other),
+        otherCompany: companyAmountOf(expense?.other),
+        otherPaidBy: formatPaidBy(expense?.other),
         otherStatus: formatStatus(expense?.other?.status),
         totalExpense: totals.totalExpense,
         pendingExpense: totals.pendingExpense,
@@ -219,9 +236,19 @@ export const getVisitReport = async (req: Request, res: Response) => {
   }
 };
 
-function formatPaidBy(paidBy?: string): string {
-  if (!paidBy) return "N/A";
-  return paidBy === "company" ? "Company (Amit)" : "Driver";
+/** Whole bill for an item, whichever side(s) settled it. */
+function itemTotal(item?: any): number {
+  return driverAmountOf(item) + companyAmountOf(item);
+}
+
+function formatPaidBy(item?: any): string {
+  if (!item) return "N/A";
+  const driver = driverAmountOf(item);
+  const company = companyAmountOf(item);
+  if (driver > 0 && company > 0) return "Driver + Company (Amit)";
+  if (company > 0) return "Company (Amit)";
+  if (driver > 0) return "Driver";
+  return "N/A";
 }
 
 function formatStatus(status?: string): string {

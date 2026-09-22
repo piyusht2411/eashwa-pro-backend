@@ -32,25 +32,13 @@ const getAdminDashboard = (req, res) => __awaiter(void 0, void 0, void 0, functi
                 expenseTotals_1.expenseTotalsStage,
                 { $group: Object.assign({ _id: null }, expenseTotals_1.expenseTotalsAccumulators) },
             ]),
-            expense_1.default.countDocuments({
-                $or: [
-                    { "food.status": "pending" },
-                    { "cng.status": "pending" },
-                    { "other.status": "pending" },
-                ],
-            }),
+            expense_1.default.countDocuments(expenseTotals_1.PENDING_EXPENSE_FILTER),
             visit_1.default.find(visitFilter)
                 .populate("driver", "name vehicleNumber")
                 .populate("createdBy", "name")
                 .sort({ startDate: -1 })
                 .limit(5),
-            expense_1.default.find({
-                $or: [
-                    { "food.status": "pending" },
-                    { "cng.status": "pending" },
-                    { "other.status": "pending" },
-                ],
-            })
+            expense_1.default.find(expenseTotals_1.PENDING_EXPENSE_FILTER)
                 .populate({ path: "visit", select: "destination startDate endDate totalDays" })
                 .populate("driver", "name vehicleNumber")
                 .sort({ updatedAt: -1 })
@@ -90,13 +78,7 @@ const getAccountsDashboard = (req, res) => __awaiter(void 0, void 0, void 0, fun
         const [totalDrivers, totalVisits, pendingApprovals, recentVisits] = yield Promise.all([
             driver_1.default.countDocuments({ isActive: true }),
             visit_1.default.countDocuments(visitFilter),
-            expense_1.default.countDocuments({
-                $or: [
-                    { "food.status": "pending" },
-                    { "cng.status": "pending" },
-                    { "other.status": "pending" },
-                ],
-            }),
+            expense_1.default.countDocuments(expenseTotals_1.PENDING_EXPENSE_FILTER),
             visit_1.default.find(visitFilter)
                 .populate("driver", "name vehicleNumber")
                 .populate("createdBy", "name")

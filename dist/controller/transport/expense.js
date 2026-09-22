@@ -36,6 +36,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getPendingExpenses = exports.rejectExpenseItem = exports.approveExpenseItem = exports.getExpenseByVisit = exports.upsertExpense = void 0;
+exports.resolvePortions = resolvePortions;
 const expense_1 = __importStar(require("../../model/expense"));
 const visit_1 = __importDefault(require("../../model/visit"));
 const driver_1 = __importDefault(require("../../model/driver"));
@@ -43,6 +44,7 @@ const user_1 = __importDefault(require("../../model/user"));
 const notify_1 = require("../../utils/notify");
 const helpers_1 = require("../../utils/helpers");
 const driverScope_1 = require("../../utils/driverScope");
+const expenseTotals_1 = require("../../utils/expenseTotals");
 // ─── Create / Upsert Expense for a Visit ─────────────────────────────────────
 const upsertExpense = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
@@ -52,16 +54,19 @@ const upsertExpense = (req, res) => __awaiter(void 0, void 0, void 0, function* 
         if (!visit)
             return res.status(404).json({ message: "Visit not found" });
         const driver = yield driver_1.default.findById(visit.driver);
-        if ((food === null || food === void 0 ? void 0 : food.amount) !== undefined) {
+        let expense = yield expense_1.default.findOne({ visit: visitId });
+        // The food cap applies to the whole bill, whoever settled which part of it.
+        if (food !== undefined) {
+            const portions = resolvePortions(food, expense === null || expense === void 0 ? void 0 : expense.food);
+            const foodTotal = portions.driverAmount + portions.companyAmount;
             const max = (0, helpers_1.maxFoodAllowance)(visit.totalDays);
-            if (food.amount > max) {
+            if (foodTotal > max) {
                 return res.status(400).json({
-                    message: `Food expense ₹${food.amount} exceeds maximum allowance of ₹${max} (₹400 × ${visit.totalDays} days)`,
+                    message: `Food expense ₹${foodTotal} exceeds maximum allowance of ₹${max} (₹400 × ${visit.totalDays} days)`,
                     maxAllowed: max,
                 });
             }
         }
-        let expense = yield expense_1.default.findOne({ visit: visitId });
         if (!expense) {
             expense = new expense_1.default({
                 visit: visitId,
@@ -136,8 +141,10 @@ const approveExpenseItem = (req, res) => __awaiter(void 0, void 0, void 0, funct
         if (!expense)
             return res.status(404).json({ message: "Expense not found" });
         const item = expense[type];
-        if (item.paidBy === "company") {
-            return res.status(400).json({ message: "Company-paid expenses are auto-approved" });
+        if ((0, expenseTotals_1.driverAmountOf)(item) === 0) {
+            return res.status(400).json({
+                message: "Nothing to approve — this expense was paid entirely by the company",
+            });
         }
         if (item.status === "approved") {
             return res.status(400).json({ message: `${type} is already approved` });
@@ -150,7 +157,8 @@ const approveExpenseItem = (req, res) => __awaiter(void 0, void 0, void 0, funct
         yield expense.save();
         const visit = yield visit_1.default.findById(expense.visit).populate("driver");
         const driver = visit === null || visit === void 0 ? void 0 : visit.driver;
-        const amount = item.amount;
+        // Only the driver portion is at stake in an approval decision.
+        const amount = (0, expenseTotals_1.driverAmountOf)(item);
         const accountsUsers = yield user_1.default.find({ role: "accounts", portal: "transport", isActive: true }).select("_id");
         const notifyIds = [...accountsUsers.map((u) => u._id)];
         if (driver === null || driver === void 0 ? void 0 : driver.userId)
@@ -180,8 +188,10 @@ const rejectExpenseItem = (req, res) => __awaiter(void 0, void 0, void 0, functi
         if (!expense)
             return res.status(404).json({ message: "Expense not found" });
         const item = expense[type];
-        if (item.paidBy === "company") {
-            return res.status(400).json({ message: "Company-paid expenses cannot be rejected" });
+        if ((0, expenseTotals_1.driverAmountOf)(item) === 0) {
+            return res.status(400).json({
+                message: "Nothing to reject — this expense was paid entirely by the company",
+            });
         }
         if (item.status === "rejected") {
             return res.status(400).json({ message: `${type} is already rejected` });
@@ -194,7 +204,8 @@ const rejectExpenseItem = (req, res) => __awaiter(void 0, void 0, void 0, functi
         yield expense.save();
         const visit = yield visit_1.default.findById(expense.visit).populate("driver");
         const driver = visit === null || visit === void 0 ? void 0 : visit.driver;
-        const amount = item.amount;
+        // Only the driver portion is at stake in an approval decision.
+        const amount = (0, expenseTotals_1.driverAmountOf)(item);
         const accountsUsers = yield user_1.default.find({ role: "accounts", portal: "transport", isActive: true }).select("_id");
         const notifyIds = [...accountsUsers.map((u) => u._id)];
         if (driver === null || driver === void 0 ? void 0 : driver.userId)
@@ -212,13 +223,7 @@ exports.rejectExpenseItem = rejectExpenseItem;
 // ─── Get All Pending Expenses (Admin) ─────────────────────────────────────────
 const getPendingExpenses = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const expenses = yield expense_1.default.find({
-            $or: [
-                { "food.status": "pending" },
-                { "cng.status": "pending" },
-                { "other.status": "pending" },
-            ],
-        })
+        const expenses = yield expense_1.default.find(expenseTotals_1.PENDING_EXPENSE_FILTER)
             .populate({ path: "visit", populate: { path: "driver", select: "name vehicleNumber" } })
             .populate("driver", "name vehicleNumber")
             .sort({ updatedAt: -1 });
@@ -229,32 +234,59 @@ const getPendingExpenses = (req, res) => __awaiter(void 0, void 0, void 0, funct
     }
 });
 exports.getPendingExpenses = getPendingExpenses;
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-function buildExpenseItem(data, type) {
-    if (!data) {
-        return { amount: 0, paidBy: "driver", status: "pending", description: "" };
+const toAmount = (value) => Math.max(0, Number(value) || 0);
+/**
+ * Read the two payer portions out of a request payload.
+ *
+ * The current app sends `driverAmount` / `companyAmount`. Builds released
+ * before the split send a single `amount` with a `paidBy` flag, and those are
+ * still out in the field, so that shape is mapped onto one side of the split.
+ * Anything the payload leaves out falls back to what is already stored.
+ */
+function resolvePortions(data, current) {
+    const stored = {
+        driverAmount: (0, expenseTotals_1.driverAmountOf)(current),
+        companyAmount: (0, expenseTotals_1.companyAmountOf)(current),
+    };
+    if (!data)
+        return stored;
+    if (data.driverAmount !== undefined || data.companyAmount !== undefined) {
+        return {
+            driverAmount: data.driverAmount !== undefined ? toAmount(data.driverAmount) : stored.driverAmount,
+            companyAmount: data.companyAmount !== undefined ? toAmount(data.companyAmount) : stored.companyAmount,
+        };
     }
-    const paidBy = data.paidBy || "driver";
+    // Legacy single-amount payload.
+    if (data.amount !== undefined || data.paidBy !== undefined) {
+        const amount = data.amount !== undefined
+            ? toAmount(data.amount)
+            : stored.driverAmount + stored.companyAmount;
+        return data.paidBy === "company"
+            ? { driverAmount: 0, companyAmount: amount }
+            : { driverAmount: amount, companyAmount: 0 };
+    }
+    return stored;
+}
+function buildExpenseItem(data, type) {
+    const { driverAmount, companyAmount } = resolvePortions(data);
     return {
-        amount: data.amount || 0,
-        paidBy,
-        status: (0, expense_1.getInitialStatus)(paidBy),
-        description: type === "other" ? (data.description || "") : undefined,
+        driverAmount,
+        companyAmount,
+        status: (0, expense_1.getInitialStatus)(driverAmount),
+        description: type === "other" ? ((data === null || data === void 0 ? void 0 : data.description) || "") : undefined,
     };
 }
 function updateExpenseItem(item, data) {
-    const amountChanged = data.amount !== undefined && Number(data.amount) !== Number(item.amount || 0);
-    const paidByChanged = data.paidBy !== undefined && data.paidBy !== item.paidBy;
-    if (data.amount !== undefined)
-        item.amount = data.amount;
-    if (data.paidBy !== undefined)
-        item.paidBy = data.paidBy;
-    if (data.description !== undefined)
+    const { driverAmount, companyAmount } = resolvePortions(data, item);
+    const portionsChanged = driverAmount !== (0, expenseTotals_1.driverAmountOf)(item) || companyAmount !== (0, expenseTotals_1.companyAmountOf)(item);
+    item.driverAmount = driverAmount;
+    item.companyAmount = companyAmount;
+    if ((data === null || data === void 0 ? void 0 : data.description) !== undefined)
         item.description = data.description;
-    // Re-editing the figure invalidates any decision already taken on it —
+    // Re-editing the figures invalidates any decision already taken on them —
     // otherwise a changed amount would slip into the total without review.
-    if (amountChanged || paidByChanged) {
-        item.status = (0, expense_1.getInitialStatus)(item.paidBy);
+    if (portionsChanged) {
+        item.status = (0, expense_1.getInitialStatus)(driverAmount);
         item.approvedBy = null;
         item.approvedAt = null;
         item.rejectedBy = null;

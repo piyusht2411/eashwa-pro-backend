@@ -9,7 +9,7 @@ export type Portal = "production" | "transport";
 export type Role = "admin" | "team" | "pdi" | "accounts" | "driver";
 
 // ─── Transport Types ──────────────────────────────────────────────────────────
-export type PaidBy = "driver" | "company";
+export type PaidBy = "driver" | "company" | "both";
 export type ExpenseStatus = "pending" | "approved" | "rejected" | "auto_approved";
 
 // ─── User ────────────────────────────────────────────────────────────────────
@@ -128,7 +128,13 @@ export interface IVisit extends Document {
 
 // ─── Expense Sub-Document (Transport) ─────────────────────────────────────────
 export interface IExpenseItem {
+  /** Portion the driver paid out of pocket — the reimbursable part. */
+  driverAmount: number;
+  /** Portion the company paid directly — never reimbursed, never needs approval. */
+  companyAmount: number;
+  /** Derived: driverAmount + companyAmount. Kept stored for reports and older clients. */
   amount: number;
+  /** Derived: "driver" | "company" | "both", based on which portions are non-zero. */
   paidBy: PaidBy;
   status: ExpenseStatus;
   approvedBy: Types.ObjectId | null;

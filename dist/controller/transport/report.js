@@ -53,14 +53,20 @@ const exportExcel = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
             { header: "Distance (km)", key: "distance", width: 14 },
             { header: "Quantity", key: "quantity", width: 10 },
             { header: "Food Expense (₹)", key: "food", width: 18 },
-            { header: "Food Paid By", key: "foodPaidBy", width: 14 },
+            { header: "Food — Driver Paid (₹)", key: "foodDriver", width: 20 },
+            { header: "Food — Company Paid (₹)", key: "foodCompany", width: 22 },
+            { header: "Food Paid By", key: "foodPaidBy", width: 18 },
             { header: "Food Status", key: "foodStatus", width: 14 },
             { header: "CNG Expense (₹)", key: "cng", width: 18 },
-            { header: "CNG Paid By", key: "cngPaidBy", width: 14 },
+            { header: "CNG — Driver Paid (₹)", key: "cngDriver", width: 20 },
+            { header: "CNG — Company Paid (₹)", key: "cngCompany", width: 22 },
+            { header: "CNG Paid By", key: "cngPaidBy", width: 18 },
             { header: "CNG Status", key: "cngStatus", width: 14 },
             { header: "Other Expense (₹)", key: "other", width: 18 },
             { header: "Other Description", key: "otherDesc", width: 22 },
-            { header: "Other Paid By", key: "otherPaidBy", width: 14 },
+            { header: "Other — Driver Paid (₹)", key: "otherDriver", width: 20 },
+            { header: "Other — Company Paid (₹)", key: "otherCompany", width: 22 },
+            { header: "Other Paid By", key: "otherPaidBy", width: 18 },
             { header: "Other Status", key: "otherStatus", width: 14 },
             { header: "Total Expense (₹)", key: "totalExpense", width: 18 },
             { header: "Awaiting Approval (₹)", key: "pendingExpense", width: 20 },
@@ -80,7 +86,7 @@ const exportExcel = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
         });
         headerRow.height = 30;
         visits.forEach((visit, index) => {
-            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o;
+            var _a, _b, _c, _d;
             const expense = expenseMap.get(visit._id.toString());
             const driver = visit.driver;
             // Recompute rather than trust stored fields, so rows written before the
@@ -96,16 +102,22 @@ const exportExcel = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
                 billNumber: visit.billNumber || "",
                 distance: visit.distance || 0,
                 quantity: visit.quantity || 0,
-                food: (_b = (_a = expense === null || expense === void 0 ? void 0 : expense.food) === null || _a === void 0 ? void 0 : _a.amount) !== null && _b !== void 0 ? _b : 0,
-                foodPaidBy: formatPaidBy((_c = expense === null || expense === void 0 ? void 0 : expense.food) === null || _c === void 0 ? void 0 : _c.paidBy),
-                foodStatus: formatStatus((_d = expense === null || expense === void 0 ? void 0 : expense.food) === null || _d === void 0 ? void 0 : _d.status),
-                cng: (_f = (_e = expense === null || expense === void 0 ? void 0 : expense.cng) === null || _e === void 0 ? void 0 : _e.amount) !== null && _f !== void 0 ? _f : 0,
-                cngPaidBy: formatPaidBy((_g = expense === null || expense === void 0 ? void 0 : expense.cng) === null || _g === void 0 ? void 0 : _g.paidBy),
-                cngStatus: formatStatus((_h = expense === null || expense === void 0 ? void 0 : expense.cng) === null || _h === void 0 ? void 0 : _h.status),
-                other: (_k = (_j = expense === null || expense === void 0 ? void 0 : expense.other) === null || _j === void 0 ? void 0 : _j.amount) !== null && _k !== void 0 ? _k : 0,
-                otherDesc: ((_l = expense === null || expense === void 0 ? void 0 : expense.other) === null || _l === void 0 ? void 0 : _l.description) || "",
-                otherPaidBy: formatPaidBy((_m = expense === null || expense === void 0 ? void 0 : expense.other) === null || _m === void 0 ? void 0 : _m.paidBy),
-                otherStatus: formatStatus((_o = expense === null || expense === void 0 ? void 0 : expense.other) === null || _o === void 0 ? void 0 : _o.status),
+                food: itemTotal(expense === null || expense === void 0 ? void 0 : expense.food),
+                foodDriver: (0, expenseTotals_1.driverAmountOf)(expense === null || expense === void 0 ? void 0 : expense.food),
+                foodCompany: (0, expenseTotals_1.companyAmountOf)(expense === null || expense === void 0 ? void 0 : expense.food),
+                foodPaidBy: formatPaidBy(expense === null || expense === void 0 ? void 0 : expense.food),
+                foodStatus: formatStatus((_a = expense === null || expense === void 0 ? void 0 : expense.food) === null || _a === void 0 ? void 0 : _a.status),
+                cng: itemTotal(expense === null || expense === void 0 ? void 0 : expense.cng),
+                cngDriver: (0, expenseTotals_1.driverAmountOf)(expense === null || expense === void 0 ? void 0 : expense.cng),
+                cngCompany: (0, expenseTotals_1.companyAmountOf)(expense === null || expense === void 0 ? void 0 : expense.cng),
+                cngPaidBy: formatPaidBy(expense === null || expense === void 0 ? void 0 : expense.cng),
+                cngStatus: formatStatus((_b = expense === null || expense === void 0 ? void 0 : expense.cng) === null || _b === void 0 ? void 0 : _b.status),
+                other: itemTotal(expense === null || expense === void 0 ? void 0 : expense.other),
+                otherDesc: ((_c = expense === null || expense === void 0 ? void 0 : expense.other) === null || _c === void 0 ? void 0 : _c.description) || "",
+                otherDriver: (0, expenseTotals_1.driverAmountOf)(expense === null || expense === void 0 ? void 0 : expense.other),
+                otherCompany: (0, expenseTotals_1.companyAmountOf)(expense === null || expense === void 0 ? void 0 : expense.other),
+                otherPaidBy: formatPaidBy(expense === null || expense === void 0 ? void 0 : expense.other),
+                otherStatus: formatStatus((_d = expense === null || expense === void 0 ? void 0 : expense.other) === null || _d === void 0 ? void 0 : _d.status),
                 totalExpense: totals.totalExpense,
                 pendingExpense: totals.pendingExpense,
                 pendingReimb: totals.pendingReimbursement,
@@ -202,10 +214,22 @@ const getVisitReport = (req, res) => __awaiter(void 0, void 0, void 0, function*
     }
 });
 exports.getVisitReport = getVisitReport;
-function formatPaidBy(paidBy) {
-    if (!paidBy)
+/** Whole bill for an item, whichever side(s) settled it. */
+function itemTotal(item) {
+    return (0, expenseTotals_1.driverAmountOf)(item) + (0, expenseTotals_1.companyAmountOf)(item);
+}
+function formatPaidBy(item) {
+    if (!item)
         return "N/A";
-    return paidBy === "company" ? "Company (Amit)" : "Driver";
+    const driver = (0, expenseTotals_1.driverAmountOf)(item);
+    const company = (0, expenseTotals_1.companyAmountOf)(item);
+    if (driver > 0 && company > 0)
+        return "Driver + Company (Amit)";
+    if (company > 0)
+        return "Company (Amit)";
+    if (driver > 0)
+        return "Driver";
+    return "N/A";
 }
 function formatStatus(status) {
     const map = {
