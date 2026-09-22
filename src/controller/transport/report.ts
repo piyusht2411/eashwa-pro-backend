@@ -156,9 +156,15 @@ export const exportExcel = async (req: Request, res: Response) => {
       driverName: "TOTAL",
       totalDays: visits.reduce((s, v) => s + (v.totalDays || 0), 0),
       distance: visits.reduce((s, v) => s + (v.distance || 0), 0),
-      food: allExpenses.reduce((s, e) => s + (e.food?.amount || 0), 0),
-      cng: allExpenses.reduce((s, e) => s + (e.cng?.amount || 0), 0),
-      other: allExpenses.reduce((s, e) => s + (e.other?.amount || 0), 0),
+      food: sumOver(allExpenses, "food", itemTotal),
+      foodDriver: sumOver(allExpenses, "food", driverAmountOf),
+      foodCompany: sumOver(allExpenses, "food", companyAmountOf),
+      cng: sumOver(allExpenses, "cng", itemTotal),
+      cngDriver: sumOver(allExpenses, "cng", driverAmountOf),
+      cngCompany: sumOver(allExpenses, "cng", companyAmountOf),
+      other: sumOver(allExpenses, "other", itemTotal),
+      otherDriver: sumOver(allExpenses, "other", driverAmountOf),
+      otherCompany: sumOver(allExpenses, "other", companyAmountOf),
       totalExpense: grandTotals.totalExpense,
       pendingExpense: grandTotals.pendingExpense,
       pendingReimb: grandTotals.pendingReimbursement,
@@ -235,6 +241,15 @@ export const getVisitReport = async (req: Request, res: Response) => {
     return res.status(500).json({ message: err.message });
   }
 };
+
+/** Column total for one expense type across every row in the sheet. */
+function sumOver(
+  expenses: any[],
+  type: "food" | "cng" | "other",
+  pick: (item?: any) => number,
+): number {
+  return expenses.reduce((total, e) => total + pick(e?.[type]), 0);
+}
 
 /** Whole bill for an item, whichever side(s) settled it. */
 function itemTotal(item?: any): number {

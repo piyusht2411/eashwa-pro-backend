@@ -150,9 +150,15 @@ const exportExcel = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
             driverName: "TOTAL",
             totalDays: visits.reduce((s, v) => s + (v.totalDays || 0), 0),
             distance: visits.reduce((s, v) => s + (v.distance || 0), 0),
-            food: allExpenses.reduce((s, e) => { var _a; return s + (((_a = e.food) === null || _a === void 0 ? void 0 : _a.amount) || 0); }, 0),
-            cng: allExpenses.reduce((s, e) => { var _a; return s + (((_a = e.cng) === null || _a === void 0 ? void 0 : _a.amount) || 0); }, 0),
-            other: allExpenses.reduce((s, e) => { var _a; return s + (((_a = e.other) === null || _a === void 0 ? void 0 : _a.amount) || 0); }, 0),
+            food: sumOver(allExpenses, "food", itemTotal),
+            foodDriver: sumOver(allExpenses, "food", expenseTotals_1.driverAmountOf),
+            foodCompany: sumOver(allExpenses, "food", expenseTotals_1.companyAmountOf),
+            cng: sumOver(allExpenses, "cng", itemTotal),
+            cngDriver: sumOver(allExpenses, "cng", expenseTotals_1.driverAmountOf),
+            cngCompany: sumOver(allExpenses, "cng", expenseTotals_1.companyAmountOf),
+            other: sumOver(allExpenses, "other", itemTotal),
+            otherDriver: sumOver(allExpenses, "other", expenseTotals_1.driverAmountOf),
+            otherCompany: sumOver(allExpenses, "other", expenseTotals_1.companyAmountOf),
             totalExpense: grandTotals.totalExpense,
             pendingExpense: grandTotals.pendingExpense,
             pendingReimb: grandTotals.pendingReimbursement,
@@ -214,6 +220,10 @@ const getVisitReport = (req, res) => __awaiter(void 0, void 0, void 0, function*
     }
 });
 exports.getVisitReport = getVisitReport;
+/** Column total for one expense type across every row in the sheet. */
+function sumOver(expenses, type, pick) {
+    return expenses.reduce((total, e) => total + pick(e === null || e === void 0 ? void 0 : e[type]), 0);
+}
 /** Whole bill for an item, whichever side(s) settled it. */
 function itemTotal(item) {
     return (0, expenseTotals_1.driverAmountOf)(item) + (0, expenseTotals_1.companyAmountOf)(item);
