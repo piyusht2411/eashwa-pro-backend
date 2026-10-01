@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getInitialStatus = void 0;
+exports.EXPENSE_ACTOR_POPULATE = exports.getInitialStatus = void 0;
 const mongoose_1 = require("mongoose");
 const expenseTotals_1 = require("../utils/expenseTotals");
 // ─── Shared sub-schema for each expense type ─────────────────────────────────
@@ -60,6 +60,9 @@ const expenseSchema = new mongoose_1.Schema({
     },
     food: Object.assign({}, expenseItemSchema),
     cng: Object.assign({}, expenseItemSchema),
+    diesel: Object.assign({}, expenseItemSchema),
+    fastTag: Object.assign({}, expenseItemSchema),
+    border: Object.assign({}, expenseItemSchema),
     other: Object.assign(Object.assign({}, expenseItemSchema), { description: { type: String, default: "" } }),
     // ─── Computed totals (stored for fast queries) ──────────────────────────
     // totalExpense counts company portions plus approved / auto-approved
@@ -78,7 +81,7 @@ const getInitialStatus = (driverAmount) => Number(driverAmount) > 0 ? "pending" 
 exports.getInitialStatus = getInitialStatus;
 // ─── Helper: refresh the derived amount / paidBy on each item ────────────────
 const syncDerivedFields = (doc) => {
-    for (const field of ["food", "cng", "other"]) {
+    for (const field of expenseTotals_1.EXPENSE_FIELDS) {
         const item = doc === null || doc === void 0 ? void 0 : doc[field];
         if (!item)
             continue;
@@ -116,5 +119,10 @@ expenseSchema.set("toJSON", {
         return ret;
     },
 });
+/** Populate spec for who approved / rejected each item, across every type. */
+exports.EXPENSE_ACTOR_POPULATE = expenseTotals_1.EXPENSE_FIELDS.flatMap((field) => [
+    { path: `${field}.approvedBy`, select: "name" },
+    { path: `${field}.rejectedBy`, select: "name" },
+]);
 const Expense = (0, mongoose_1.model)("Expense", expenseSchema);
 exports.default = Expense;

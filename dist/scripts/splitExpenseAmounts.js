@@ -34,7 +34,7 @@ const mongoose_1 = __importDefault(require("mongoose"));
 const expense_1 = __importDefault(require("../model/expense"));
 const expenseTotals_1 = require("../utils/expenseTotals");
 dotenv_1.default.config();
-const FIELDS = ["food", "cng", "other"];
+const FIELDS = expenseTotals_1.EXPENSE_FIELDS;
 const run = () => __awaiter(void 0, void 0, void 0, function* () {
     var _a, e_1, _b, _c;
     const url = process.env.MONGO_URL;

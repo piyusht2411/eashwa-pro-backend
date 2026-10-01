@@ -30,5 +30,8 @@ const notificationSchema = new mongoose_1.Schema({
         index: true,
     },
 }, { timestamps: true });
+// The feed lists a user's notifications newest first, and counts unread ones.
+notificationSchema.index({ recipient: 1, createdAt: -1 });
+notificationSchema.index({ recipient: 1, isRead: 1 });
 const Notification = (0, mongoose_1.model)("Notification", notificationSchema);
 exports.default = Notification;

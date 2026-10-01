@@ -80,22 +80,41 @@ const getAdminDashboardSummary = (req, res) => __awaiter(void 0, void 0, void 0,
 });
 exports.getAdminDashboardSummary = getAdminDashboardSummary;
 // ─── Admin Report & History ──────────────────────────────────────────────────
+/**
+ * Shared `$match` for the report screen and its export.
+ *
+ * `month` (1–12) + `year` pick one calendar month and win over
+ * `startDate` / `endDate`; leaving all of them out means all time. Log dates
+ * are stored at 00:00 UTC, so the month is bounded in UTC too.
+ */
+const buildReportMatch = (query) => {
+    const { startDate, endDate, teamId } = query;
+    const month = Number(query.month);
+    const year = Number(query.year);
+    const match = {};
+    if (Number.isInteger(month) && month >= 1 && month <= 12 && Number.isInteger(year) && year > 0) {
+        match.date = {
+            $gte: new Date(Date.UTC(year, month - 1, 1)),
+            $lt: new Date(Date.UTC(year, month, 1)),
+        };
+    }
+    else if (startDate || endDate) {
+        match.date = {};
+        if (startDate)
+            match.date.$gte = new Date(String(startDate));
+        if (endDate)
+            match.date.$lte = new Date(String(endDate));
+    }
+    if (teamId) {
+        match.team = new mongoose_1.default.Types.ObjectId(String(teamId));
+    }
+    return match;
+};
 const getAdminReport = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
+    var _a, _b, _c, _d, _e, _f;
     try {
-        const { startDate, endDate, teamId } = req.query;
         const { page, limit, skip } = getPagination(req.query);
-        const match = {};
-        if (startDate || endDate) {
-            match.date = {};
-            if (startDate)
-                match.date.$gte = new Date(String(startDate));
-            if (endDate)
-                match.date.$lte = new Date(String(endDate));
-        }
-        if (teamId) {
-            match.team = new mongoose_1.default.Types.ObjectId(String(teamId));
-        }
+        const match = buildReportMatch(req.query);
         const basePipeline = [
             { $match: match },
             {
@@ -143,11 +162,16 @@ const getAdminReport = (req, res) => __awaiter(void 0, void 0, void 0, function*
                 },
             },
         ];
+        // Sort and page on the raw logs first, then join only those rows. The
+        // joins never drop or duplicate a log (one PDI per log, all unwinds keep
+        // empties), so the page is identical — it just stops joining every log.
+        const [matchStage, ...joinStages] = basePipeline;
         const logsPipeline = [
-            ...basePipeline,
+            matchStage,
             { $sort: { date: -1 } },
             { $skip: skip },
             { $limit: limit },
+            ...joinStages,
             {
                 $project: {
                     _id: 1,
@@ -166,11 +190,11 @@ const getAdminReport = (req, res) => __awaiter(void 0, void 0, void 0, function*
                 },
             },
         ];
-        const countPipeline = [...basePipeline, { $count: "total" }];
-        const [summaryRes, logs, countRes] = yield Promise.all([
+        const [summaryRes, logs, total] = yield Promise.all([
             productionLog_1.default.aggregate(summaryPipeline),
             productionLog_1.default.aggregate(logsPipeline),
-            productionLog_1.default.aggregate(countPipeline),
+            // Same rows as the joined pipeline, without doing the joins to count them.
+            productionLog_1.default.countDocuments(match),
         ]);
         // Roll up the per-container groups, capping verified at each target.
         // totalAmount is derived from capped verified × rate (never over-target),
@@ -199,12 +223,11 @@ const getAdminReport = (req, res) => __awaiter(void 0, void 0, void 0, function*
             totalPaid = (_c = (_b = paymentAgg[0]) === null || _b === void 0 ? void 0 : _b.totalPaid) !== null && _c !== void 0 ? _c : 0;
             totalRemaining = totalAmount - totalPaid;
         }
-        const total = (_e = (_d = countRes[0]) === null || _d === void 0 ? void 0 : _d.total) !== null && _e !== void 0 ? _e : 0;
         return res.status(200).json({
             summary: {
-                totalReported: (_f = summaryRow === null || summaryRow === void 0 ? void 0 : summaryRow.totalReported) !== null && _f !== void 0 ? _f : 0,
-                totalVerified: (_g = summaryRow === null || summaryRow === void 0 ? void 0 : summaryRow.totalVerified) !== null && _g !== void 0 ? _g : 0,
-                totalIncomplete: (_h = summaryRow === null || summaryRow === void 0 ? void 0 : summaryRow.totalIncomplete) !== null && _h !== void 0 ? _h : 0,
+                totalReported: (_d = summaryRow === null || summaryRow === void 0 ? void 0 : summaryRow.totalReported) !== null && _d !== void 0 ? _d : 0,
+                totalVerified: (_e = summaryRow === null || summaryRow === void 0 ? void 0 : summaryRow.totalVerified) !== null && _e !== void 0 ? _e : 0,
+                totalIncomplete: (_f = summaryRow === null || summaryRow === void 0 ? void 0 : summaryRow.totalIncomplete) !== null && _f !== void 0 ? _f : 0,
                 totalAmount,
                 totalPaid,
                 totalRemaining,
@@ -227,18 +250,8 @@ exports.getAdminReport = getAdminReport;
 // ─── Admin Monitor (live counts) ─────────────────────────────────────────────
 const exportAdminReport = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const { startDate, endDate, teamId } = req.query;
-        const match = {};
-        if (startDate || endDate) {
-            match.date = {};
-            if (startDate)
-                match.date.$gte = new Date(String(startDate));
-            if (endDate)
-                match.date.$lte = new Date(String(endDate));
-        }
-        if (teamId) {
-            match.team = new mongoose_1.default.Types.ObjectId(String(teamId));
-        }
+        const { startDate, endDate, teamId, month, year } = req.query;
+        const match = buildReportMatch(req.query);
         const logs = yield productionLog_1.default.aggregate([
             { $match: match },
             {
@@ -294,6 +307,8 @@ const exportAdminReport = (req, res) => __awaiter(void 0, void 0, void 0, functi
                 startDate: startDate || null,
                 endDate: endDate || null,
                 teamId: teamId || null,
+                month: month ? Number(month) : null,
+                year: year ? Number(year) : null,
             },
         });
     }

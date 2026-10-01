@@ -1,5 +1,6 @@
 import { Schema, model } from "mongoose";
 import { IVisit } from "../types";
+import { calcTotalDays } from "../utils/helpers";
 
 const visitSchema = new Schema<IVisit>(
   {
@@ -27,6 +28,17 @@ const visitSchema = new Schema<IVisit>(
     endDate: {
       type: Date,
       required: true,
+    },
+    // Optional time of day picked with each date, "HH:mm" 24h IST. Already
+    // folded into startDate / endDate; kept so the app can tell a picked
+    // 12:00 AM apart from a date-only visit.
+    startTime: {
+      type: String,
+      default: "",
+    },
+    endTime: {
+      type: String,
+      default: "",
     },
     totalDays: {
       type: Number,
@@ -60,14 +72,10 @@ const visitSchema = new Schema<IVisit>(
   { timestamps: true }
 );
 
-// Auto-calculate totalDays before save
+// Auto-calculate totalDays (IST calendar days, times ignored) before save
 visitSchema.pre("save", function (next) {
   if (this.isModified("startDate") || this.isModified("endDate")) {
-    const start = new Date(this.startDate);
-    const end = new Date(this.endDate);
-    const diffMs = end.getTime() - start.getTime();
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-    this.totalDays = diffDays + 1;
+    this.totalDays = calcTotalDays(this.startDate, this.endDate);
   }
   next();
 });

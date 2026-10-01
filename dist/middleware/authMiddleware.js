@@ -39,7 +39,9 @@ const authenticateToken = (req, res, next) => __awaiter(void 0, void 0, void 0, 
     const token = authHeader.replace("Bearer ", "").trim();
     try {
         const decoded = jsonwebtoken_1.default.verify(token, process.env.JWT_SECRET_KEY || "");
-        const user = yield user_1.default.findById(decoded.userId).select("_id role portal crossPortalAccess name isActive");
+        const user = yield user_1.default.findById(decoded.userId)
+            .select("_id role portal crossPortalAccess name isActive")
+            .lean();
         if (!user) {
             return res.status(401).json({ message: "User not found" });
         }
@@ -48,6 +50,8 @@ const authenticateToken = (req, res, next) => __awaiter(void 0, void 0, void 0, 
         }
         req.userId = decoded.userId;
         req.userRole = user.role;
+        // Reused by requirePortal / requireRole so a request reads the user once.
+        req.authUser = user;
         // A cross-portal admin carries the portal they switched into on the token;
         // everyone else is pinned to the portal on their account.
         req.userPortal = resolveActivePortal(user, decoded.activePortal);
@@ -80,9 +84,18 @@ const authenticateToken = (req, res, next) => __awaiter(void 0, void 0, void 0, 
 });
 exports.authenticateToken = authenticateToken;
 // ─── Role Guard ───────────────────────────────────────────────────────────────
+/**
+ * The user loaded by authenticateToken, or a fresh read when it is missing
+ * (the refresh-cookie path authenticates from the token alone). Every guard
+ * used to query the user again, adding a database round trip each.
+ */
+const loadGuardUser = (req) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a;
+    return (_a = req.authUser) !== null && _a !== void 0 ? _a : (yield user_1.default.findById(req.userId).select("role portal crossPortalAccess").lean());
+});
 const requireRole = (...roles) => {
     return (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
-        const user = yield user_1.default.findById(req.userId).select("role");
+        const user = yield loadGuardUser(req);
         if (!user || !roles.includes(user.role)) {
             return res.status(403).json({
                 message: `Access denied. Required role(s): ${roles.join(", ")}`,
@@ -96,7 +109,7 @@ exports.requireRole = requireRole;
 // ─── Portal Guard ────────────────────────────────────────────────────────────
 const requirePortal = (...portals) => {
     return (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
-        const user = yield user_1.default.findById(req.userId).select("portal role crossPortalAccess");
+        const user = yield loadGuardUser(req);
         if (!user) {
             return res.status(403).json({
                 message: `Access denied. Required portal(s): ${portals.join(", ")}`,

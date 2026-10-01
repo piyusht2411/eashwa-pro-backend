@@ -76,20 +76,40 @@ export const getAdminDashboardSummary = async (req: Request, res: Response) => {
 };
 
 // ─── Admin Report & History ──────────────────────────────────────────────────
+
+/**
+ * Shared `$match` for the report screen and its export.
+ *
+ * `month` (1–12) + `year` pick one calendar month and win over
+ * `startDate` / `endDate`; leaving all of them out means all time. Log dates
+ * are stored at 00:00 UTC, so the month is bounded in UTC too.
+ */
+const buildReportMatch = (query: Request["query"]) => {
+  const { startDate, endDate, teamId } = query;
+  const month = Number(query.month);
+  const year = Number(query.year);
+  const match: any = {};
+
+  if (Number.isInteger(month) && month >= 1 && month <= 12 && Number.isInteger(year) && year > 0) {
+    match.date = {
+      $gte: new Date(Date.UTC(year, month - 1, 1)),
+      $lt: new Date(Date.UTC(year, month, 1)),
+    };
+  } else if (startDate || endDate) {
+    match.date = {};
+    if (startDate) match.date.$gte = new Date(String(startDate));
+    if (endDate) match.date.$lte = new Date(String(endDate));
+  }
+  if (teamId) {
+    match.team = new mongoose.Types.ObjectId(String(teamId));
+  }
+  return match;
+};
 export const getAdminReport = async (req: Request, res: Response) => {
   try {
-    const { startDate, endDate, teamId } = req.query;
     const { page, limit, skip } = getPagination(req.query);
 
-    const match: any = {};
-    if (startDate || endDate) {
-      match.date = {};
-      if (startDate) match.date.$gte = new Date(String(startDate));
-      if (endDate) match.date.$lte = new Date(String(endDate));
-    }
-    if (teamId) {
-      match.team = new mongoose.Types.ObjectId(String(teamId));
-    }
+    const match = buildReportMatch(req.query);
 
     const basePipeline: any[] = [
       { $match: match },
@@ -140,11 +160,16 @@ export const getAdminReport = async (req: Request, res: Response) => {
       },
     ];
 
+    // Sort and page on the raw logs first, then join only those rows. The
+    // joins never drop or duplicate a log (one PDI per log, all unwinds keep
+    // empties), so the page is identical — it just stops joining every log.
+    const [matchStage, ...joinStages] = basePipeline;
     const logsPipeline = [
-      ...basePipeline,
+      matchStage,
       { $sort: { date: -1 } },
       { $skip: skip },
       { $limit: limit },
+      ...joinStages,
       {
         $project: {
           _id: 1,
@@ -164,12 +189,11 @@ export const getAdminReport = async (req: Request, res: Response) => {
       },
     ];
 
-    const countPipeline = [...basePipeline, { $count: "total" }];
-
-    const [summaryRes, logs, countRes] = await Promise.all([
+    const [summaryRes, logs, total] = await Promise.all([
       ProductionLog.aggregate(summaryPipeline),
       ProductionLog.aggregate(logsPipeline),
-      ProductionLog.aggregate(countPipeline),
+      // Same rows as the joined pipeline, without doing the joins to count them.
+      ProductionLog.countDocuments(match),
     ]);
 
     // Roll up the per-container groups, capping verified at each target.
@@ -202,7 +226,6 @@ export const getAdminReport = async (req: Request, res: Response) => {
       totalRemaining = totalAmount - totalPaid;
     }
 
-    const total = countRes[0]?.total ?? 0;
 
     return res.status(200).json({
       summary: {
@@ -230,17 +253,8 @@ export const getAdminReport = async (req: Request, res: Response) => {
 // ─── Admin Monitor (live counts) ─────────────────────────────────────────────
 export const exportAdminReport = async (req: Request, res: Response) => {
   try {
-    const { startDate, endDate, teamId } = req.query;
-
-    const match: any = {};
-    if (startDate || endDate) {
-      match.date = {};
-      if (startDate) match.date.$gte = new Date(String(startDate));
-      if (endDate) match.date.$lte = new Date(String(endDate));
-    }
-    if (teamId) {
-      match.team = new mongoose.Types.ObjectId(String(teamId));
-    }
+    const { startDate, endDate, teamId, month, year } = req.query;
+    const match = buildReportMatch(req.query);
 
     const logs = await ProductionLog.aggregate([
       { $match: match },
@@ -298,6 +312,8 @@ export const exportAdminReport = async (req: Request, res: Response) => {
         startDate: startDate || null,
         endDate: endDate || null,
         teamId: teamId || null,
+        month: month ? Number(month) : null,
+        year: year ? Number(year) : null,
       },
     });
   } catch (err: any) {

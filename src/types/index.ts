@@ -116,6 +116,10 @@ export interface IVisit extends Document {
   destination: string;
   startDate: Date;
   endDate: Date;
+  /** "HH:mm" (24h, IST) when a time was picked for the start; "" for date-only. */
+  startTime: string;
+  /** "HH:mm" (24h, IST) when a time was picked for the end; "" for date-only. */
+  endTime: string;
   totalDays: number;
   quantity: number;
   billNumber: string;
@@ -151,6 +155,9 @@ export interface IExpense extends Document {
   driver: Types.ObjectId;
   food: IExpenseItem;
   cng: IExpenseItem;
+  diesel: IExpenseItem;
+  fastTag: IExpenseItem;
+  border: IExpenseItem;
   other: IExpenseItem & { description: string };
   totalExpense: number;
   pendingExpense: number;

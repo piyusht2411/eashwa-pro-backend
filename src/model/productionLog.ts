@@ -37,6 +37,11 @@ const productionLogSchema = new Schema<IProductionLog>(
 
 // Each team can only submit one log per container per day
 productionLogSchema.index({ container: 1, team: 1, date: 1 }, { unique: true });
+// Report filters by date (optionally per team) and sorts newest first;
+// the monitor counts today's logs by createdAt and status.
+productionLogSchema.index({ date: -1 });
+productionLogSchema.index({ team: 1, date: -1 });
+productionLogSchema.index({ status: 1, createdAt: -1 });
 
 const ProductionLog = model<IProductionLog>("ProductionLog", productionLogSchema);
 

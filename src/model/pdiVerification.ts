@@ -44,6 +44,11 @@ const pdiVerificationSchema = new Schema<IPdiVerification>(
   { timestamps: true }
 );
 
+// Per-container totals, a verifier's history, and the "recent" feed.
+pdiVerificationSchema.index({ container: 1 });
+pdiVerificationSchema.index({ verifiedBy: 1, createdAt: -1 });
+pdiVerificationSchema.index({ createdAt: -1 });
+
 const PdiVerification = model<IPdiVerification>("PdiVerification", pdiVerificationSchema);
 
 export default PdiVerification;

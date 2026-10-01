@@ -15,12 +15,13 @@ import {
   companyAmountOf,
   computeExpenseTotals,
   driverAmountOf,
+  EXPENSE_FIELDS,
   paidByOf,
 } from "../utils/expenseTotals";
 
 dotenv.config();
 
-const FIELDS = ["food", "cng", "other"] as const;
+const FIELDS = EXPENSE_FIELDS;
 
 const run = async () => {
   const url = process.env.MONGO_URL;

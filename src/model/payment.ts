@@ -61,6 +61,10 @@ const paymentSchema = new Schema<IPayment>(
   { timestamps: true }
 );
 
+// A team's ledger, and the "recently updated" feed.
+paymentSchema.index({ team: 1 });
+paymentSchema.index({ updatedAt: -1 });
+
 const Payment = model<IPayment>("Payment", paymentSchema);
 
 export default Payment;

@@ -17,6 +17,23 @@
 
 export const COUNTED_STATUSES = ["approved", "auto_approved"] as const;
 
+/** Every expense type a visit can carry, in display order. */
+export const EXPENSE_FIELDS = ["food", "cng", "diesel", "fastTag", "border", "other"] as const;
+export type ExpenseField = (typeof EXPENSE_FIELDS)[number];
+
+/** Human-readable names for notifications and report headers. */
+export const EXPENSE_LABELS: Record<ExpenseField, string> = {
+  food: "Food",
+  cng: "CNG",
+  diesel: "Diesel",
+  fastTag: "FASTag",
+  border: "Border",
+  other: "Other",
+};
+
+export const isExpenseField = (value: unknown): value is ExpenseField =>
+  EXPENSE_FIELDS.includes(value as ExpenseField);
+
 type ExpenseItemLike = {
   driverAmount?: number | null;
   companyAmount?: number | null;
@@ -25,11 +42,7 @@ type ExpenseItemLike = {
   status?: string | null;
 };
 
-type ExpenseLike = {
-  food?: ExpenseItemLike | null;
-  cng?: ExpenseItemLike | null;
-  other?: ExpenseItemLike | null;
-};
+type ExpenseLike = Partial<Record<ExpenseField, ExpenseItemLike | null>>;
 
 export interface ExpenseTotals {
   totalExpense: number;
@@ -91,12 +104,10 @@ export const normalizeExpenseItem = <T extends ExpenseItemLike>(item?: T | null)
   return item;
 };
 
-/** Normalize all three items on an expense document / plain object. */
+/** Normalize every item on an expense document / plain object. */
 export const normalizeExpense = <T extends ExpenseLike>(expense?: T | null): T | null => {
   if (!expense) return null;
-  normalizeExpenseItem(expense.food);
-  normalizeExpenseItem(expense.cng);
-  normalizeExpenseItem(expense.other);
+  for (const field of EXPENSE_FIELDS) normalizeExpenseItem(expense[field]);
   return expense;
 };
 
@@ -107,7 +118,7 @@ const isCounted = (item?: ExpenseItemLike | null) =>
 export const computeExpenseTotals = (expense?: ExpenseLike | null): ExpenseTotals => {
   if (!expense) return { ...ZERO_TOTALS };
 
-  const items = [expense.food, expense.cng, expense.other].filter(Boolean) as ExpenseItemLike[];
+  const items = EXPENSE_FIELDS.map((field) => expense[field]).filter(Boolean) as ExpenseItemLike[];
 
   const sumDriver = (predicate: (i: ExpenseItemLike) => boolean) =>
     items.filter(predicate).reduce((total, i) => total + driverAmountOf(i), 0);
@@ -129,7 +140,7 @@ export const computeExpenseTotals = (expense?: ExpenseLike | null): ExpenseTotal
 // Totals are recalculated from the item statuses inside the pipeline rather
 // than trusting the stored fields, so dashboards stay correct even for
 // documents saved before this rule existed.
-const FIELDS = ["food", "cng", "other"] as const;
+const FIELDS = EXPENSE_FIELDS;
 
 /** `$expr` for the driver portion, falling back to the legacy amount/paidBy pair. */
 const driverExpr = (field: string) => ({

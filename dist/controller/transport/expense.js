@@ -45,11 +45,12 @@ const notify_1 = require("../../utils/notify");
 const helpers_1 = require("../../utils/helpers");
 const driverScope_1 = require("../../utils/driverScope");
 const expenseTotals_1 = require("../../utils/expenseTotals");
+const TYPE_ERROR = `type must be ${expenseTotals_1.EXPENSE_FIELDS.join(" | ")}`;
 // ─── Create / Upsert Expense for a Visit ─────────────────────────────────────
 const upsertExpense = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { visitId } = req.params;
-        const { food, cng, other } = req.body;
+        const { food } = req.body;
         const visit = yield visit_1.default.findById(visitId);
         if (!visit)
             return res.status(404).json({ message: "Visit not found" });
@@ -68,24 +69,23 @@ const upsertExpense = (req, res) => __awaiter(void 0, void 0, void 0, function* 
             }
         }
         if (!expense) {
-            expense = new expense_1.default({
-                visit: visitId,
-                driver: visit.driver,
-                food: buildExpenseItem(food, "food"),
-                cng: buildExpenseItem(cng, "cng"),
-                other: buildExpenseItem(other, "other"),
-            });
+            const items = {};
+            for (const field of expenseTotals_1.EXPENSE_FIELDS)
+                items[field] = buildExpenseItem(req.body[field], field);
+            expense = new expense_1.default(Object.assign({ visit: visitId, driver: visit.driver }, items));
         }
         else {
-            if (food !== undefined)
-                updateExpenseItem(expense.food, food);
-            if (cng !== undefined)
-                updateExpenseItem(expense.cng, cng);
-            if (other !== undefined)
-                updateExpenseItem(expense.other, other);
+            for (const field of expenseTotals_1.EXPENSE_FIELDS) {
+                if (req.body[field] === undefined)
+                    continue;
+                // Documents saved before a type existed have no sub-document for it yet.
+                if (!expense[field])
+                    expense[field] = buildExpenseItem(undefined, field);
+                updateExpenseItem(expense[field], req.body[field]);
+            }
         }
         yield expense.save();
-        const hasPending = [expense.food, expense.cng, expense.other].some((item) => item.status === "pending");
+        const hasPending = expenseTotals_1.EXPENSE_FIELDS.some((field) => { var _a; return ((_a = expense[field]) === null || _a === void 0 ? void 0 : _a.status) === "pending"; });
         if (hasPending) {
             const adminIds = yield (0, notify_1.getPortalAdminIds)("transport");
             if (adminIds.length > 0) {
@@ -113,13 +113,7 @@ const getExpenseByVisit = (req, res) => __awaiter(void 0, void 0, void 0, functi
                 return res.status(403).json({ message: scope.message });
             }
         }
-        const expense = yield expense_1.default.findOne({ visit: visitId })
-            .populate("food.approvedBy", "name")
-            .populate("food.rejectedBy", "name")
-            .populate("cng.approvedBy", "name")
-            .populate("cng.rejectedBy", "name")
-            .populate("other.approvedBy", "name")
-            .populate("other.rejectedBy", "name");
+        const expense = yield expense_1.default.findOne({ visit: visitId }).populate(expense_1.EXPENSE_ACTOR_POPULATE);
         if (!expense)
             return res.status(404).json({ message: "No expense found for this visit" });
         return res.status(200).json({ expense });
@@ -134,20 +128,20 @@ const approveExpenseItem = (req, res) => __awaiter(void 0, void 0, void 0, funct
     try {
         const { id } = req.params;
         const { type } = req.body;
-        if (!type || !["food", "cng", "other"].includes(type)) {
-            return res.status(400).json({ message: "type must be food | cng | other" });
+        if (!(0, expenseTotals_1.isExpenseField)(type)) {
+            return res.status(400).json({ message: TYPE_ERROR });
         }
         const expense = yield expense_1.default.findById(id);
         if (!expense)
             return res.status(404).json({ message: "Expense not found" });
         const item = expense[type];
-        if ((0, expenseTotals_1.driverAmountOf)(item) === 0) {
+        if (!item || (0, expenseTotals_1.driverAmountOf)(item) === 0) {
             return res.status(400).json({
                 message: "Nothing to approve — this expense was paid entirely by the company",
             });
         }
         if (item.status === "approved") {
-            return res.status(400).json({ message: `${type} is already approved` });
+            return res.status(400).json({ message: `${expenseTotals_1.EXPENSE_LABELS[type]} is already approved` });
         }
         item.status = "approved";
         item.approvedBy = req.userId;
@@ -164,9 +158,9 @@ const approveExpenseItem = (req, res) => __awaiter(void 0, void 0, void 0, funct
         if (driver === null || driver === void 0 ? void 0 : driver.userId)
             notifyIds.push(driver.userId);
         if (notifyIds.length > 0) {
-            yield (0, notify_1.sendPushNotificationToMany)(notifyIds, "Expense Approved ✅", `${type.charAt(0).toUpperCase() + type.slice(1)} expense of ₹${amount} for ${(driver === null || driver === void 0 ? void 0 : driver.name) || "driver"} has been approved`, { type: "expense_approved", expenseId: id, expenseType: type });
+            yield (0, notify_1.sendPushNotificationToMany)(notifyIds, "Expense Approved ✅", `${expenseTotals_1.EXPENSE_LABELS[type]} expense of ₹${amount} for ${(driver === null || driver === void 0 ? void 0 : driver.name) || "driver"} has been approved`, { type: "expense_approved", expenseId: id, expenseType: type });
         }
-        return res.status(200).json({ message: `${type} expense approved successfully`, expense });
+        return res.status(200).json({ message: `${expenseTotals_1.EXPENSE_LABELS[type]} expense approved successfully`, expense });
     }
     catch (err) {
         return res.status(500).json({ message: err.message });
@@ -178,8 +172,8 @@ const rejectExpenseItem = (req, res) => __awaiter(void 0, void 0, void 0, functi
     try {
         const { id } = req.params;
         const { type, remark } = req.body;
-        if (!type || !["food", "cng", "other"].includes(type)) {
-            return res.status(400).json({ message: "type must be food | cng | other" });
+        if (!(0, expenseTotals_1.isExpenseField)(type)) {
+            return res.status(400).json({ message: TYPE_ERROR });
         }
         if (!remark || remark.trim().length === 0) {
             return res.status(400).json({ message: "remark is required when rejecting an expense" });
@@ -188,13 +182,13 @@ const rejectExpenseItem = (req, res) => __awaiter(void 0, void 0, void 0, functi
         if (!expense)
             return res.status(404).json({ message: "Expense not found" });
         const item = expense[type];
-        if ((0, expenseTotals_1.driverAmountOf)(item) === 0) {
+        if (!item || (0, expenseTotals_1.driverAmountOf)(item) === 0) {
             return res.status(400).json({
                 message: "Nothing to reject — this expense was paid entirely by the company",
             });
         }
         if (item.status === "rejected") {
-            return res.status(400).json({ message: `${type} is already rejected` });
+            return res.status(400).json({ message: `${expenseTotals_1.EXPENSE_LABELS[type]} is already rejected` });
         }
         item.status = "rejected";
         item.rejectedBy = req.userId;
@@ -211,9 +205,9 @@ const rejectExpenseItem = (req, res) => __awaiter(void 0, void 0, void 0, functi
         if (driver === null || driver === void 0 ? void 0 : driver.userId)
             notifyIds.push(driver.userId);
         if (notifyIds.length > 0) {
-            yield (0, notify_1.sendPushNotificationToMany)(notifyIds, "Expense Rejected ❌", `${type.charAt(0).toUpperCase() + type.slice(1)} expense of ₹${amount} for ${(driver === null || driver === void 0 ? void 0 : driver.name) || "driver"} was rejected. Reason: ${remark}`, { type: "expense_rejected", expenseId: id, expenseType: type, remark });
+            yield (0, notify_1.sendPushNotificationToMany)(notifyIds, "Expense Rejected ❌", `${expenseTotals_1.EXPENSE_LABELS[type]} expense of ₹${amount} for ${(driver === null || driver === void 0 ? void 0 : driver.name) || "driver"} was rejected. Reason: ${remark}`, { type: "expense_rejected", expenseId: id, expenseType: type, remark });
         }
-        return res.status(200).json({ message: `${type} expense rejected`, expense });
+        return res.status(200).json({ message: `${expenseTotals_1.EXPENSE_LABELS[type]} expense rejected`, expense });
     }
     catch (err) {
         return res.status(500).json({ message: err.message });

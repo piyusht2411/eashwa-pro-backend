@@ -45,6 +45,10 @@ const notificationSchema = new Schema<INotification>(
   { timestamps: true }
 );
 
+// The feed lists a user's notifications newest first, and counts unread ones.
+notificationSchema.index({ recipient: 1, createdAt: -1 });
+notificationSchema.index({ recipient: 1, isRead: 1 });
+
 const Notification = model<INotification>("Notification", notificationSchema);
 
 export default Notification;

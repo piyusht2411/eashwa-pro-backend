@@ -40,5 +40,9 @@ const pdiVerificationSchema = new mongoose_1.Schema({
         default: Date.now,
     },
 }, { timestamps: true });
+// Per-container totals, a verifier's history, and the "recent" feed.
+pdiVerificationSchema.index({ container: 1 });
+pdiVerificationSchema.index({ verifiedBy: 1, createdAt: -1 });
+pdiVerificationSchema.index({ createdAt: -1 });
 const PdiVerification = (0, mongoose_1.model)("PdiVerification", pdiVerificationSchema);
 exports.default = PdiVerification;

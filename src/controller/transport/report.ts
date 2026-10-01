@@ -1,5 +1,4 @@
 import { Request, Response } from "express";
-import ExcelJS from "exceljs";
 import Visit from "../../model/visit";
 import Expense from "../../model/expense";
 import { buildDateFilter } from "../../utils/helpers";
@@ -8,6 +7,9 @@ import {
   computeExpenseTotals,
   driverAmountOf,
   emptyExpenseTotals,
+  EXPENSE_FIELDS,
+  EXPENSE_LABELS,
+  ExpenseField,
 } from "../../utils/expenseTotals";
 
 // ─── Export Excel Report ──────────────────────────────────────────────────────
@@ -32,6 +34,8 @@ export const exportExcel = async (req: Request, res: Response) => {
     const expenses = await Expense.find({ visit: { $in: visitIds } }).lean();
     const expenseMap = new Map(expenses.map((e) => [e.visit.toString(), e]));
 
+    // Loaded on demand: it is as heavy as mongoose and only this export uses it.
+    const { default: ExcelJS } = await import("exceljs");
     const workbook = new ExcelJS.Workbook();
     workbook.creator = "E-Ashwa Transport";
     workbook.created = new Date();
@@ -45,27 +49,14 @@ export const exportExcel = async (req: Request, res: Response) => {
       { header: "Vehicle No.", key: "vehicleNumber", width: 16 },
       { header: "Destination", key: "destination", width: 22 },
       { header: "Start Date", key: "startDate", width: 14 },
+      { header: "Start Time", key: "startTime", width: 12 },
       { header: "End Date", key: "endDate", width: 14 },
+      { header: "End Time", key: "endTime", width: 12 },
       { header: "Total Days", key: "totalDays", width: 12 },
       { header: "Bill Number", key: "billNumber", width: 16 },
       { header: "Distance (km)", key: "distance", width: 14 },
       { header: "Quantity", key: "quantity", width: 10 },
-      { header: "Food Expense (₹)", key: "food", width: 18 },
-      { header: "Food — Driver Paid (₹)", key: "foodDriver", width: 20 },
-      { header: "Food — Company Paid (₹)", key: "foodCompany", width: 22 },
-      { header: "Food Paid By", key: "foodPaidBy", width: 18 },
-      { header: "Food Status", key: "foodStatus", width: 14 },
-      { header: "CNG Expense (₹)", key: "cng", width: 18 },
-      { header: "CNG — Driver Paid (₹)", key: "cngDriver", width: 20 },
-      { header: "CNG — Company Paid (₹)", key: "cngCompany", width: 22 },
-      { header: "CNG Paid By", key: "cngPaidBy", width: 18 },
-      { header: "CNG Status", key: "cngStatus", width: 14 },
-      { header: "Other Expense (₹)", key: "other", width: 18 },
-      { header: "Other Description", key: "otherDesc", width: 22 },
-      { header: "Other — Driver Paid (₹)", key: "otherDriver", width: 20 },
-      { header: "Other — Company Paid (₹)", key: "otherCompany", width: 22 },
-      { header: "Other Paid By", key: "otherPaidBy", width: 18 },
-      { header: "Other Status", key: "otherStatus", width: 14 },
+      ...EXPENSE_FIELDS.flatMap(expenseColumns),
       { header: "Total Expense (₹)", key: "totalExpense", width: 18 },
       { header: "Awaiting Approval (₹)", key: "pendingExpense", width: 20 },
       { header: "Pending Reimb. (₹)", key: "pendingReimb", width: 18 },
@@ -96,28 +87,15 @@ export const exportExcel = async (req: Request, res: Response) => {
         driverName: driver?.name || "",
         vehicleNumber: visit.vehicleNumber,
         destination: visit.destination,
-        startDate: new Date(visit.startDate).toLocaleDateString("en-IN"),
-        endDate: new Date(visit.endDate).toLocaleDateString("en-IN"),
+        startDate: formatIstDate(visit.startDate),
+        startTime: formatTime12h(visit.startTime),
+        endDate: formatIstDate(visit.endDate),
+        endTime: formatTime12h(visit.endTime),
         totalDays: visit.totalDays,
         billNumber: visit.billNumber || "",
         distance: visit.distance || 0,
         quantity: visit.quantity || 0,
-        food: itemTotal(expense?.food),
-        foodDriver: driverAmountOf(expense?.food),
-        foodCompany: companyAmountOf(expense?.food),
-        foodPaidBy: formatPaidBy(expense?.food),
-        foodStatus: formatStatus(expense?.food?.status),
-        cng: itemTotal(expense?.cng),
-        cngDriver: driverAmountOf(expense?.cng),
-        cngCompany: companyAmountOf(expense?.cng),
-        cngPaidBy: formatPaidBy(expense?.cng),
-        cngStatus: formatStatus(expense?.cng?.status),
-        other: itemTotal(expense?.other),
-        otherDesc: (expense?.other as any)?.description || "",
-        otherDriver: driverAmountOf(expense?.other),
-        otherCompany: companyAmountOf(expense?.other),
-        otherPaidBy: formatPaidBy(expense?.other),
-        otherStatus: formatStatus(expense?.other?.status),
+        ...Object.assign({}, ...EXPENSE_FIELDS.map((field) => expenseCells(field, expense))),
         totalExpense: totals.totalExpense,
         pendingExpense: totals.pendingExpense,
         pendingReimb: totals.pendingReimbursement,
@@ -156,15 +134,11 @@ export const exportExcel = async (req: Request, res: Response) => {
       driverName: "TOTAL",
       totalDays: visits.reduce((s, v) => s + (v.totalDays || 0), 0),
       distance: visits.reduce((s, v) => s + (v.distance || 0), 0),
-      food: sumOver(allExpenses, "food", itemTotal),
-      foodDriver: sumOver(allExpenses, "food", driverAmountOf),
-      foodCompany: sumOver(allExpenses, "food", companyAmountOf),
-      cng: sumOver(allExpenses, "cng", itemTotal),
-      cngDriver: sumOver(allExpenses, "cng", driverAmountOf),
-      cngCompany: sumOver(allExpenses, "cng", companyAmountOf),
-      other: sumOver(allExpenses, "other", itemTotal),
-      otherDriver: sumOver(allExpenses, "other", driverAmountOf),
-      otherCompany: sumOver(allExpenses, "other", companyAmountOf),
+      ...Object.assign({}, ...EXPENSE_FIELDS.map((field) => ({
+        [field]: sumOver(allExpenses, field, itemTotal),
+        [`${field}Driver`]: sumOver(allExpenses, field, driverAmountOf),
+        [`${field}Company`]: sumOver(allExpenses, field, companyAmountOf),
+      }))),
       totalExpense: grandTotals.totalExpense,
       pendingExpense: grandTotals.pendingExpense,
       pendingReimb: grandTotals.pendingReimbursement,
@@ -245,10 +219,49 @@ export const getVisitReport = async (req: Request, res: Response) => {
 /** Column total for one expense type across every row in the sheet. */
 function sumOver(
   expenses: any[],
-  type: "food" | "cng" | "other",
+  type: ExpenseField,
   pick: (item?: any) => number,
 ): number {
   return expenses.reduce((total, e) => total + pick(e?.[type]), 0);
+}
+
+/** The five columns every expense type gets, plus a description for "other". */
+function expenseColumns(field: ExpenseField) {
+  const label = EXPENSE_LABELS[field];
+  return [
+    { header: `${label} Expense (₹)`, key: field, width: 18 },
+    ...(field === "other" ? [{ header: "Other Description", key: "otherDesc", width: 22 }] : []),
+    { header: `${label} — Driver Paid (₹)`, key: `${field}Driver`, width: 20 },
+    { header: `${label} — Company Paid (₹)`, key: `${field}Company`, width: 22 },
+    { header: `${label} Paid By`, key: `${field}PaidBy`, width: 18 },
+    { header: `${label} Status`, key: `${field}Status`, width: 14 },
+  ];
+}
+
+/** Row values for one expense type, keyed to match {@link expenseColumns}. */
+function expenseCells(field: ExpenseField, expense?: any): Record<string, string | number> {
+  const item = expense?.[field];
+  return {
+    [field]: itemTotal(item),
+    ...(field === "other" ? { otherDesc: item?.description || "" } : {}),
+    [`${field}Driver`]: driverAmountOf(item),
+    [`${field}Company`]: companyAmountOf(item),
+    [`${field}PaidBy`]: formatPaidBy(item),
+    [`${field}Status`]: formatStatus(item?.status),
+  };
+}
+
+/** Calendar date in IST — the server runs in UTC, the visits happen in India. */
+function formatIstDate(date: Date): string {
+  return new Date(date).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
+}
+
+/** "14:05" → "2:05 PM"; blank for date-only visits. */
+function formatTime12h(time?: string): string {
+  if (!time) return "";
+  const [h, m] = time.split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return "";
+  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
 }
 
 /** Whole bill for an item, whichever side(s) settled it. */

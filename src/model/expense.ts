@@ -4,6 +4,7 @@ import {
   companyAmountOf,
   computeExpenseTotals,
   driverAmountOf,
+  EXPENSE_FIELDS,
   normalizeExpense,
   paidByOf,
 } from "../utils/expenseTotals";
@@ -67,6 +68,9 @@ const expenseSchema = new Schema<IExpense>(
     },
     food: { ...expenseItemSchema },
     cng: { ...expenseItemSchema },
+    diesel: { ...expenseItemSchema },
+    fastTag: { ...expenseItemSchema },
+    border: { ...expenseItemSchema },
     other: {
       ...expenseItemSchema,
       description: { type: String, default: "" },
@@ -92,7 +96,7 @@ export const getInitialStatus = (driverAmount: number): ExpenseStatus =>
 
 // ─── Helper: refresh the derived amount / paidBy on each item ────────────────
 const syncDerivedFields = (doc: any) => {
-  for (const field of ["food", "cng", "other"] as const) {
+  for (const field of EXPENSE_FIELDS) {
     const item = doc?.[field];
     if (!item) continue;
     const driverAmount = driverAmountOf(item);
@@ -133,6 +137,12 @@ expenseSchema.set("toJSON", {
     return ret;
   },
 });
+
+/** Populate spec for who approved / rejected each item, across every type. */
+export const EXPENSE_ACTOR_POPULATE = EXPENSE_FIELDS.flatMap((field) => [
+  { path: `${field}.approvedBy`, select: "name" },
+  { path: `${field}.rejectedBy`, select: "name" },
+]);
 
 const Expense = model<IExpense>("Expense", expenseSchema);
 

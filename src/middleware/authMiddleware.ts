@@ -38,9 +38,9 @@ export const authenticateToken = async (
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET_KEY || "") as any;
-    const user = await User.findById(decoded.userId).select(
-      "_id role portal crossPortalAccess name isActive"
-    );
+    const user = await User.findById(decoded.userId)
+      .select("_id role portal crossPortalAccess name isActive")
+      .lean();
     if (!user) {
       return res.status(401).json({ message: "User not found" });
     }
@@ -49,6 +49,8 @@ export const authenticateToken = async (
     }
     req.userId = decoded.userId;
     (req as any).userRole = user.role;
+    // Reused by requirePortal / requireRole so a request reads the user once.
+    (req as any).authUser = user;
     // A cross-portal admin carries the portal they switched into on the token;
     // everyone else is pinned to the portal on their account.
     req.userPortal = resolveActivePortal(user, decoded.activePortal);
@@ -87,9 +89,18 @@ export const authenticateToken = async (
 };
 
 // ─── Role Guard ───────────────────────────────────────────────────────────────
+/**
+ * The user loaded by authenticateToken, or a fresh read when it is missing
+ * (the refresh-cookie path authenticates from the token alone). Every guard
+ * used to query the user again, adding a database round trip each.
+ */
+const loadGuardUser = async (req: Request) =>
+  (req as any).authUser ??
+  (await User.findById(req.userId).select("role portal crossPortalAccess").lean());
+
 export const requireRole = (...roles: Role[]) => {
   return async (req: Request, res: Response, next: NextFunction) => {
-    const user = await User.findById(req.userId).select("role");
+    const user = await loadGuardUser(req);
     if (!user || !roles.includes(user.role)) {
       return res.status(403).json({
         message: `Access denied. Required role(s): ${roles.join(", ")}`,
@@ -103,7 +114,7 @@ export const requireRole = (...roles: Role[]) => {
 // ─── Portal Guard ────────────────────────────────────────────────────────────
 export const requirePortal = (...portals: Portal[]) => {
   return async (req: Request, res: Response, next: NextFunction) => {
-    const user = await User.findById(req.userId).select("portal role crossPortalAccess");
+    const user = await loadGuardUser(req);
     if (!user) {
       return res.status(403).json({
         message: `Access denied. Required portal(s): ${portals.join(", ")}`,

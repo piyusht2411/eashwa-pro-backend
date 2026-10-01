@@ -1,4 +1,27 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
     return new (P || (P = Promise))(function (resolve, reject) {
@@ -14,10 +37,23 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.deleteVisit = exports.updateVisit = exports.getVisitById = exports.getAllVisits = exports.createVisit = void 0;
 const visit_1 = __importDefault(require("../../model/visit"));
-const expense_1 = __importDefault(require("../../model/expense"));
+const expense_1 = __importStar(require("../../model/expense"));
 const driver_1 = __importDefault(require("../../model/driver"));
 const notify_1 = require("../../utils/notify");
 const helpers_1 = require("../../utils/helpers");
+/** Accepts "" / null to clear a time, a valid "HH:mm", or rejects with null. */
+const parseTime = (value) => {
+    if (value === undefined || value === null || value === "")
+        return "";
+    return (0, helpers_1.isValidTime)(value) ? value : null;
+};
+/** Notification-friendly "12 Oct 2026, 9:30 am" in IST, time only when one was picked. */
+const describeWhen = (date, time) => time
+    ? new Date(date).toLocaleString("en-IN", {
+        timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric",
+        hour: "numeric", minute: "2-digit", hour12: true,
+    })
+    : new Date(date).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
 const driverScope_1 = require("../../utils/driverScope");
 // ─── Create Visit ─────────────────────────────────────────────────────────────
 const createVisit = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
@@ -26,11 +62,21 @@ const createVisit = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
         if (!driverId || !destination || !startDate || !endDate) {
             return res.status(400).json({ message: "driverId, destination, startDate and endDate are required" });
         }
+        const startTime = parseTime(req.body.startTime);
+        const endTime = parseTime(req.body.endTime);
+        if (startTime === null || endTime === null) {
+            return res.status(400).json({ message: "startTime and endTime must be in HH:mm (24-hour) format" });
+        }
         const driver = yield driver_1.default.findById(driverId);
         if (!driver)
             return res.status(404).json({ message: "Driver not found" });
-        if (new Date(endDate) < new Date(startDate)) {
-            return res.status(400).json({ message: "endDate cannot be before startDate" });
+        const start = (0, helpers_1.buildVisitInstant)(startDate, startTime);
+        const end = (0, helpers_1.buildVisitInstant)(endDate, endTime);
+        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+            return res.status(400).json({ message: "startDate and endDate must be valid dates" });
+        }
+        if ((0, helpers_1.endsBeforeStart)(start, end, startTime, endTime)) {
+            return res.status(400).json({ message: "End cannot be before start" });
         }
         // A driver may have no vehicle assigned, so the visit must carry one explicitly.
         const resolvedVehicle = (vehicleNumber || driver.vehicleNumber || "").trim();
@@ -43,8 +89,10 @@ const createVisit = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
             driver: driverId,
             vehicleNumber: resolvedVehicle,
             destination,
-            startDate: new Date(startDate),
-            endDate: new Date(endDate),
+            startDate: start,
+            endDate: end,
+            startTime,
+            endTime,
             quantity: quantity || 0,
             billNumber: billNumber || "",
             distance: distance || 0,
@@ -57,7 +105,7 @@ const createVisit = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
         }
         // Notify driver user if linked
         if (driver.userId) {
-            yield (0, notify_1.sendPushNotification)(driver.userId, "New Visit Assigned", `You have a new visit to ${destination} from ${new Date(startDate).toLocaleDateString()} to ${new Date(endDate).toLocaleDateString()}`, { type: "visit_created", visitId: visit._id.toString() });
+            yield (0, notify_1.sendPushNotification)(driver.userId, "New Visit Assigned", `You have a new visit to ${destination} from ${describeWhen(start, startTime)} to ${describeWhen(end, endTime)}`, { type: "visit_created", visitId: visit._id.toString() });
         }
         const populated = yield visit_1.default.findById(visit._id).populate("driver", "name vehicleNumber");
         return res.status(201).json({ message: "Visit created successfully", visit: populated });
@@ -128,13 +176,7 @@ const getVisitById = (req, res) => __awaiter(void 0, void 0, void 0, function* (
                 return res.status(403).json({ message: scope.message });
             }
         }
-        const expense = yield expense_1.default.findOne({ visit: visit._id })
-            .populate("food.approvedBy", "name")
-            .populate("food.rejectedBy", "name")
-            .populate("cng.approvedBy", "name")
-            .populate("cng.rejectedBy", "name")
-            .populate("other.approvedBy", "name")
-            .populate("other.rejectedBy", "name");
+        const expense = yield expense_1.default.findOne({ visit: visit._id }).populate(expense_1.EXPENSE_ACTOR_POPULATE);
         return res.status(200).json({ visit, expense: expense || null });
     }
     catch (err) {
@@ -146,32 +188,77 @@ exports.getVisitById = getVisitById;
 const updateVisit = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { id } = req.params;
-        const { destination, startDate, endDate, quantity, billNumber, distance, vehicleNumber } = req.body;
-        const visit = yield visit_1.default.findById(id).populate("driver");
+        const { driverId, destination, startDate, endDate, quantity, billNumber, distance, vehicleNumber } = req.body;
+        const visit = yield visit_1.default.findById(id);
         if (!visit)
             return res.status(404).json({ message: "Visit not found" });
+        if (destination !== undefined && !String(destination).trim()) {
+            return res.status(400).json({ message: "destination cannot be empty" });
+        }
+        if (vehicleNumber !== undefined && !String(vehicleNumber).trim()) {
+            return res.status(400).json({ message: "vehicleNumber cannot be empty" });
+        }
+        // Reassigning the visit to another driver.
+        const previousDriverId = String(visit.driver);
+        let driverChanged = false;
+        if (driverId !== undefined && String(driverId) !== previousDriverId) {
+            const nextDriver = yield driver_1.default.findById(driverId);
+            if (!nextDriver)
+                return res.status(404).json({ message: "Driver not found" });
+            visit.driver = nextDriver._id;
+            driverChanged = true;
+        }
         if (destination !== undefined)
-            visit.destination = destination;
+            visit.destination = String(destination).trim();
         if (vehicleNumber !== undefined)
-            visit.vehicleNumber = vehicleNumber.toUpperCase();
+            visit.vehicleNumber = String(vehicleNumber).trim().toUpperCase();
         if (quantity !== undefined)
             visit.quantity = quantity;
         if (billNumber !== undefined)
             visit.billNumber = billNumber;
         if (distance !== undefined)
             visit.distance = distance;
-        if (startDate !== undefined)
-            visit.startDate = new Date(startDate);
-        if (endDate !== undefined)
-            visit.endDate = new Date(endDate);
-        if (visit.endDate < visit.startDate) {
-            return res.status(400).json({ message: "endDate cannot be before startDate" });
+        const { startTime, endTime } = req.body;
+        const nextStartTime = startTime !== undefined ? parseTime(startTime) : visit.startTime || "";
+        const nextEndTime = endTime !== undefined ? parseTime(endTime) : visit.endTime || "";
+        if (nextStartTime === null || nextEndTime === null) {
+            return res.status(400).json({ message: "startTime and endTime must be in HH:mm (24-hour) format" });
+        }
+        // Re-derive each instant when either its date or its time changed.
+        if (startDate !== undefined || startTime !== undefined) {
+            visit.startDate = (0, helpers_1.buildVisitInstant)(startDate !== null && startDate !== void 0 ? startDate : visit.startDate, nextStartTime);
+            visit.startTime = nextStartTime;
+        }
+        if (endDate !== undefined || endTime !== undefined) {
+            visit.endDate = (0, helpers_1.buildVisitInstant)(endDate !== null && endDate !== void 0 ? endDate : visit.endDate, nextEndTime);
+            visit.endTime = nextEndTime;
+        }
+        if (Number.isNaN(visit.startDate.getTime()) || Number.isNaN(visit.endDate.getTime())) {
+            return res.status(400).json({ message: "startDate and endDate must be valid dates" });
+        }
+        if ((0, helpers_1.endsBeforeStart)(visit.startDate, visit.endDate, visit.startTime, visit.endTime)) {
+            return res.status(400).json({ message: "End cannot be before start" });
         }
         visit.updatedBy = req.userId;
         yield visit.save();
+        // The expense row carries the driver too, so it follows the visit.
+        if (driverChanged) {
+            yield expense_1.default.updateOne({ visit: visit._id }, { $set: { driver: visit.driver } });
+        }
         const driver = yield driver_1.default.findById(visit.driver);
         if (driver === null || driver === void 0 ? void 0 : driver.userId) {
-            yield (0, notify_1.sendPushNotification)(driver.userId, "Visit Updated", `Your visit to ${visit.destination} has been updated`, { type: "visit_updated", visitId: visit._id.toString() });
+            yield (0, notify_1.sendPushNotification)(driver.userId, driverChanged ? "New Visit Assigned" : "Visit Updated", driverChanged
+                ? `You have been assigned a visit to ${visit.destination}`
+                : `Your visit to ${visit.destination} has been updated`, { type: driverChanged ? "visit_created" : "visit_updated", visitId: visit._id.toString() });
+        }
+        // Let the previous driver know the trip is no longer theirs.
+        if (driverChanged) {
+            const previousDriver = yield driver_1.default.findById(previousDriverId);
+            if (previousDriver === null || previousDriver === void 0 ? void 0 : previousDriver.userId) {
+                yield (0, notify_1.sendPushNotification)(previousDriver.userId, "Visit Reassigned", `Your visit to ${visit.destination} has been assigned to another driver`, 
+                // No visitId — they can no longer open it, so the tap should not deep-link.
+                { type: "visit_updated" });
+            }
         }
         const populated = yield visit_1.default.findById(visit._id).populate("driver", "name vehicleNumber");
         return res.status(200).json({ message: "Visit updated successfully", visit: populated });

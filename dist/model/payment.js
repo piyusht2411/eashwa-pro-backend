@@ -53,5 +53,8 @@ const paymentSchema = new mongoose_1.Schema({
         required: true,
     },
 }, { timestamps: true });
+// A team's ledger, and the "recently updated" feed.
+paymentSchema.index({ team: 1 });
+paymentSchema.index({ updatedAt: -1 });
 const Payment = (0, mongoose_1.model)("Payment", paymentSchema);
 exports.default = Payment;

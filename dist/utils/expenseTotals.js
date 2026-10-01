@@ -16,8 +16,21 @@
 // approval. Driver amounts still sitting in "pending" (and rejected ones) are
 // held out and reported separately as `pendingExpense` / `rejectedAmount`.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.emptyExpenseTotals = exports.expenseTotalsAccumulators = exports.PENDING_EXPENSE_FILTER = exports.expenseTotalsStage = exports.computeExpenseTotals = exports.normalizeExpense = exports.normalizeExpenseItem = exports.paidByOf = exports.companyAmountOf = exports.driverAmountOf = exports.COUNTED_STATUSES = void 0;
+exports.emptyExpenseTotals = exports.expenseTotalsAccumulators = exports.PENDING_EXPENSE_FILTER = exports.expenseTotalsStage = exports.computeExpenseTotals = exports.normalizeExpense = exports.normalizeExpenseItem = exports.paidByOf = exports.companyAmountOf = exports.driverAmountOf = exports.isExpenseField = exports.EXPENSE_LABELS = exports.EXPENSE_FIELDS = exports.COUNTED_STATUSES = void 0;
 exports.COUNTED_STATUSES = ["approved", "auto_approved"];
+/** Every expense type a visit can carry, in display order. */
+exports.EXPENSE_FIELDS = ["food", "cng", "diesel", "fastTag", "border", "other"];
+/** Human-readable names for notifications and report headers. */
+exports.EXPENSE_LABELS = {
+    food: "Food",
+    cng: "CNG",
+    diesel: "Diesel",
+    fastTag: "FASTag",
+    border: "Border",
+    other: "Other",
+};
+const isExpenseField = (value) => exports.EXPENSE_FIELDS.includes(value);
+exports.isExpenseField = isExpenseField;
 const ZERO_TOTALS = {
     totalExpense: 0,
     pendingExpense: 0,
@@ -72,13 +85,12 @@ const normalizeExpenseItem = (item) => {
     return item;
 };
 exports.normalizeExpenseItem = normalizeExpenseItem;
-/** Normalize all three items on an expense document / plain object. */
+/** Normalize every item on an expense document / plain object. */
 const normalizeExpense = (expense) => {
     if (!expense)
         return null;
-    (0, exports.normalizeExpenseItem)(expense.food);
-    (0, exports.normalizeExpenseItem)(expense.cng);
-    (0, exports.normalizeExpenseItem)(expense.other);
+    for (const field of exports.EXPENSE_FIELDS)
+        (0, exports.normalizeExpenseItem)(expense[field]);
     return expense;
 };
 exports.normalizeExpense = normalizeExpense;
@@ -87,7 +99,7 @@ const isCounted = (item) => exports.COUNTED_STATUSES.includes(item === null || i
 const computeExpenseTotals = (expense) => {
     if (!expense)
         return Object.assign({}, ZERO_TOTALS);
-    const items = [expense.food, expense.cng, expense.other].filter(Boolean);
+    const items = exports.EXPENSE_FIELDS.map((field) => expense[field]).filter(Boolean);
     const sumDriver = (predicate) => items.filter(predicate).reduce((total, i) => total + (0, exports.driverAmountOf)(i), 0);
     // Company money is spent the moment it is recorded — there is nothing to approve.
     const companyTotal = items.reduce((total, i) => total + (0, exports.companyAmountOf)(i), 0);
@@ -105,7 +117,7 @@ exports.computeExpenseTotals = computeExpenseTotals;
 // Totals are recalculated from the item statuses inside the pipeline rather
 // than trusting the stored fields, so dashboards stay correct even for
 // documents saved before this rule existed.
-const FIELDS = ["food", "cng", "other"];
+const FIELDS = exports.EXPENSE_FIELDS;
 /** `$expr` for the driver portion, falling back to the legacy amount/paidBy pair. */
 const driverExpr = (field) => ({
     $ifNull: [
